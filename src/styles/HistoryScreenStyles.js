@@ -1,0 +1,113 @@
+// HistoryScreenStyles.js - dark mode compatible
+import { StyleSheet } from 'react-native';
+
+export const createHistoryScreenStyles = (theme) => StyleSheet.create({
+  profilecontainer: {
+    flex: 1,
+    backgroundColor: theme.background,
+    paddingTop: 0,
+    position: 'relative',
+  },
+  savedtitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 15,
+    marginBottom: 15,
+    color: theme.text,
+  },
+  savedlistContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 100,
+  },
+  savedcard: {
+    backgroundColor: theme.card,
+    borderRadius: 10,
+    marginBottom: 16,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: theme.shadow || '#000',
+    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+  },
+  savedcardImage: {
+    width: '100%',
+    height: 200,
+    backgroundColor: theme.skeleton || theme.card,
+  },
+  savedcardContent: {
+    padding: 12,
+  },
+  savedcardTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 6,
+    color: theme.text,
+  },
+  savedcardDescription: {
+    fontSize: 14,
+    color: theme.text,
+    marginBottom: 6,
+  },
+  savedcardPrice: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: theme.primary,
+    marginBottom: 8,
+  },
+  savednoData: {
+    textAlign: 'center',
+    marginTop: 30,
+    fontSize: 16,
+    color: theme.text,
+  },
+  bottomNavWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.background,
+    elevation: 10,
+    shadowColor: theme.shadow || '#000',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: -2 },
+    shadowRadius: 4,
+    alignItems: 'center',
+    paddingBottom: 16,
+    paddingTop: 12,
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: theme.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    marginTop: 50,
+    paddingHorizontal: 20,
+  },
+  ctaButton: {
+    backgroundColor: theme.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    marginTop: 18,
+    alignItems: 'center',
+    alignSelf: 'center',
+    elevation: 2,
+  },
+  ctaButtonText: {
+    color: theme.card,
+    fontWeight: 'bold',
+    fontSize: 16,
+    letterSpacing: 0.5,
+  },
+});

@@ -1,0 +1,131 @@
+// FiltersScreenStyles.js - refactored for theme compatibility and dark mode
+import { StyleSheet } from 'react-native';
+
+export const createFiltersScreenStyles = (theme) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: theme.background,
+  },
+  headerWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 15,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+    backgroundColor: theme.background,
+    borderBottomWidth: 1,
+    borderColor: theme.border,
+  },
+  backButton: {
+    marginRight: 10,
+  },
+  logo: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: theme.text,
+    flex: 1,
+  },
+  scrollContainer: {
+    paddingBottom: 100,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 5,
+    marginTop: 20,
+    marginHorizontal: 20,
+    color: theme.text,
+  },
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 10,
+    marginHorizontal: 20,
+    color: theme.text,
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginHorizontal: 20,
+  },
+  filterButton: {
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: theme.border,
+    marginVertical: 5,
+  },
+  selected: {
+    backgroundColor: theme.primary,
+  },
+  selectedText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  unselectedText: {
+    color: theme.text,
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    padding: 20,
+    backgroundColor: theme.background,
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+  },
+  applyButton: {
+    backgroundColor: theme.primary,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+  },
+  resetButton: {
+    backgroundColor: theme.border,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 5,
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  resetButtonText: {
+    color: 'black',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  guestBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.banner,
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+  },
+  guestBannerText: {
+    color: theme.guestBannerText,
+    fontSize: 14,
+    fontWeight: '500',
+    flexWrap: 'wrap',
+  },
+  guestBannerLink: {
+    color: theme.primary,
+    textDecorationLine: 'underline',
+    fontWeight: 'bold',
+  },
+});
