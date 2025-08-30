@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "sauntera",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -21,12 +21,13 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.anonymous.frontend",
+      "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "READ_CALENDAR",
         "WRITE_CALENDAR"
       ],
-      "versionCode": 31,
+      "versionCode": 33,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -37,7 +38,7 @@
           ],
           "data": [
             {
-              "scheme": "myapp",
+              "scheme": "sauntera",
               "host": "*"
             }
           ]
