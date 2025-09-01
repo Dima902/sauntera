@@ -71,7 +71,7 @@ export default function HomeScreen() {
     navigation.navigate('LocationSelectorScreen');
   };
 
-  // NEW: Guest-blocked Filters button handler (used by MainDeckSection)
+  // Guest-blocked Filters button handler (used by MainDeckSection)
   const handleFilterPress = () => {
     Keyboard.dismiss();
     if (userStatusLoading) return;
@@ -109,6 +109,10 @@ export default function HomeScreen() {
     }, [])
   );
   // ---------------------------------------------------------------------
+
+  // Optional: pass auth actions down to deck sections (they can forward to SwipeDeck)
+  const onLogin = () => navigation.navigate('LoginScreen'); // name per your navigator
+  const onUpgrade = () => navigation.navigate('SubscriptionScreen');
 
   return (
     <View style={styles.container}>
@@ -165,8 +169,12 @@ export default function HomeScreen() {
                 // report loading up + receive lock flag
                 onLoadingChange={setMainLoading}
                 forceLockHeight={forceLockHeight}
-                // NEW: pass handler so guests see toast instead of navigation
+                // guests see toast instead of navigation
                 onPressFilters={handleFilterPress}
+                // OPTIONAL: also pass auth state & actions for sections that forward to SwipeDeck
+                isGuest={isGuest}
+                onLogin={onLogin}
+                onUpgrade={onUpgrade}
               />
 
               <RestaurantDeckSection
@@ -174,6 +182,10 @@ export default function HomeScreen() {
                 // report loading up + receive lock flag
                 onLoadingChange={setRestaurantLoading}
                 forceLockHeight={forceLockHeight}
+                // OPTIONAL: forward auth props
+                isGuest={isGuest}
+                onLogin={onLogin}
+                onUpgrade={onUpgrade}
               />
 
               <View style={styles.madeWithRow}>

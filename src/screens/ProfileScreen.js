@@ -1,6 +1,14 @@
-// ProfileScreen.js — flicker-free focus + stable plan render
-import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, Image, Alert, InteractionManager } from 'react-native';
+// src/screens/ProfileScreen.js — inline “Verify your email” badge + live refresh
+import React, { useEffect, useState, useMemo, useRef, useContext } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Image,
+  Alert,
+  InteractionManager,
+  AppState,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import BottomNav from '../components/BottomNav';
 import { doc, getDoc } from 'firebase/firestore';
@@ -11,6 +19,7 @@ import { useTheme } from '../styles/theme';
 import { createProfileScreenStyles } from '../styles/ProfileScreenStyles';
 import Toast from 'react-native-toast-message';
 import { useUserStatus } from '../hooks/useUserStatus';
+import { AuthContext } from '../context/AuthContext';
 
 export default function ProfileScreen({ navigation: navProp }) {
   const navigation = navProp || useNavigation();
@@ -27,6 +36,9 @@ export default function ProfileScreen({ navigation: navProp }) {
   const [localUser, setLocalUser] = useState(null);
   const [profile, setProfile] = useState({ age: '', interests: [] });
 
+  // Email verification helpers from context
+  const { resendEmailVerification, checkEmailVerified } = useContext(AuthContext);
+
   // ——— Anti-flicker guards ———
   const inFlightRef = useRef(false);
   const lastLoadedUidRef = useRef(null);
@@ -34,7 +46,9 @@ export default function ProfileScreen({ navigation: navProp }) {
   const unmountedRef = useRef(false);
 
   useEffect(() => {
-    return () => { unmountedRef.current = true; };
+    return () => {
+      unmountedRef.current = true;
+    };
   }, []);
 
   // Init auth once
@@ -53,36 +67,39 @@ export default function ProfileScreen({ navigation: navProp }) {
     if (user && user.uid !== localUser?.uid) {
       setLocalUser(authInstance.currentUser || user);
     }
-  }, [user, authInstance]);
+  }, [user, authInstance]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Memoize static lists to reduce renders
   const premiumBenefits = useMemo(
-    () => ([
+    () => [
       { label: 'Unlimited date saves', info: 'Save as many date ideas as you like — no limits!' },
       { label: 'Full itinerary builder', info: 'Plan full evenings with 3+ steps — like dinner, show, and dessert.' },
       { label: 'All categories + secret spots', info: 'Access exclusive ideas including hidden gems and premium-only activities.' },
       { label: 'Smart suggestions & reviews', info: 'Get GPT-powered recommendations, ratings, and user tips.' },
-    ]),
+    ],
     []
   );
 
   const freeIncluded = useMemo(
-    () => ([
+    () => [
       { label: 'Save up to 5 date ideas', info: 'Free users can save 5 favorite ideas to revisit anytime.' },
       { label: '1 date night with up to 2 activities', info: 'You can build a short date with two steps — like coffee then a walk.' },
-      { label: 'Limited filters', info: 'Free plan gives access to basic filters like Romantic Dinner, Outdoor Adventure, Budget-Friendly' },
-    ]),
+      {
+        label: 'Limited filters',
+        info: 'Free plan gives access to basic filters like Romantic Dinner, Outdoor Adventure, Budget-Friendly',
+      },
+    ],
     []
   );
 
   const freeUpsell = useMemo(
-    () => ([
+    () => [
       { label: 'Unlimited date saves', info: 'Save as many date ideas as you like — no limits!' },
       { label: 'Full itinerary builder', info: 'Plan full evenings with 3+ steps — like dinner, show, and dessert.' },
       { label: 'Advanced Filters', info: 'Access category-specific filters like mood, activity type, and indoor/outdoor preference.' },
       { label: 'All categories + secret spots', info: 'Explore exclusive ideas and hidden gems not available to free users.' },
       { label: 'Smart suggestions & reviews', info: 'Get AI-enhanced tips, user insights, and better matches.' },
-    ]),
+    ],
     []
   );
 
@@ -94,17 +111,15 @@ export default function ProfileScreen({ navigation: navProp }) {
 
     const uid = authInstance.currentUser.uid;
 
-    // Skip if same user and already loaded this focus
     if (inFlightRef.current) return;
-
     inFlightRef.current = true;
 
     const run = async () => {
       try {
         // Defer expensive work until after animations to avoid visible layout jumps
-        await new Promise(resolve => InteractionManager.runAfterInteractions(resolve));
+        await new Promise((resolve) => InteractionManager.runAfterInteractions(resolve));
 
-        // Refresh auth user (photo, displayName, etc.)
+        // Refresh auth user (photo, displayName, emailVerified, etc.)
         await reload(authInstance.currentUser);
         const refreshedUser = authInstance.currentUser;
 
@@ -114,7 +129,6 @@ export default function ProfileScreen({ navigation: navProp }) {
           setLocalUser({ ...refreshedUser, photoURL: updatedPhoto });
           photoHandledRef.current = true;
           setTimeout(() => {
-            // Clear param after commit — prevents immediate second focus tick
             if (!unmountedRef.current) {
               navigation.setParams({ updatedPhotoURL: undefined });
             }
@@ -130,7 +144,11 @@ export default function ProfileScreen({ navigation: navProp }) {
         }
 
         // Only refetch Firestore if the uid changed or we don’t have profile yet
-        if (lastLoadedUidRef.current !== uid || !profile || (!profile.age && (!profile.interests || profile.interests.length === 0))) {
+        if (
+          lastLoadedUidRef.current !== uid ||
+          !profile ||
+          (!profile.age && (!profile.interests || profile.interests.length === 0))
+        ) {
           const snap = await getDoc(doc(db, 'users', uid));
           if (snap.exists()) {
             const data = snap.data() || {};
@@ -154,6 +172,43 @@ export default function ProfileScreen({ navigation: navProp }) {
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFocused, userStatusLoading, authInstance, isGuest]);
+
+  // 🔄 Auto-refresh emailVerified on focus & when app returns to foreground
+  useEffect(() => {
+    if (!isFocused) return;
+    if (!authInstance?.currentUser) return;
+
+    let isMounted = true;
+
+    const checkNow = async () => {
+      try {
+        const verified = await checkEmailVerified();
+        if (isMounted && verified) {
+          // after reload, authInstance.currentUser is updated with emailVerified=true
+          setLocalUser({ ...authInstance.currentUser });
+          // Optional confirmation:
+          // Toast.show({ type: 'success', text1: 'Email verified' });
+        }
+      } catch (e) {
+        if (__DEV__) console.log('verify poll failed:', e);
+      }
+    };
+
+    // initial check + poll every 4s while focused
+    checkNow();
+    const intervalId = setInterval(checkNow, 4000);
+
+    // also check when app comes back to foreground
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') checkNow();
+    });
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      sub.remove();
+    };
+  }, [isFocused, authInstance, checkEmailVerified]);
 
   // Minimal shell while we hydrate auth + tier
   if (userStatusLoading || !authInstance) {
@@ -184,10 +239,7 @@ export default function ProfileScreen({ navigation: navProp }) {
               Sign up to create your profile!
             </Text>
           </Text>
-          <TouchableOpacity
-            style={styles.signupButton}
-            onPress={() => navigation.navigate('LoginScreen')}
-          >
+          <TouchableOpacity style={styles.signupButton} onPress={() => navigation.navigate('LoginScreen')}>
             <Text style={styles.signupButtonText}>Sign Up / Log In</Text>
           </TouchableOpacity>
         </View>
@@ -198,7 +250,21 @@ export default function ProfileScreen({ navigation: navProp }) {
     );
   }
 
-  const { displayName, photoURL } = localUser || {};
+  const { displayName, photoURL, emailVerified, email, providerData = [] } = localUser || {};
+
+  // Show badge only for password-provider accounts that aren't verified yet
+  const needsEmailVerify =
+    emailVerified === false && providerData.some((p) => p?.providerId === 'password');
+
+  const onResendVerify = async () => {
+    try {
+      await resendEmailVerification();
+      Toast.show({ type: 'success', text1: 'Verification email sent' });
+    } catch (e) {
+      console.error(e);
+      Toast.show({ type: 'error', text1: 'Could not send email' });
+    }
+  };
 
   const showInfo = (message) => {
     Alert.alert('Feature Info', message, [{ text: 'OK' }]);
@@ -232,6 +298,29 @@ export default function ProfileScreen({ navigation: navProp }) {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Inline verify badge (non-blocking) */}
+        {needsEmailVerify && (
+          <View
+            style={{
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: theme.border,
+              backgroundColor: '#FFF8E1',
+            }}
+          >
+            <Text style={{ color: theme.text, marginBottom: 8 }}>
+              You haven’t verified your email{email ? ` (${email})` : ''}.
+            </Text>
+            <TouchableOpacity onPress={onResendVerify}>
+              <Text style={{ color: theme.primary, textDecorationLine: 'underline' }}>
+                Resend verification email
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Plan header uses hook (stable) and only renders after userStatusLoading=false */}
         <View style={styles.subscriptionContainer}>

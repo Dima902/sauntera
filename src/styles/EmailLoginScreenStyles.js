@@ -1,18 +1,20 @@
+// src/styles/EmailLoginScreenStyles.js
 import { StyleSheet } from 'react-native';
 
 export const createEmailLoginStyles = (theme) =>
   StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.background,
+      backgroundColor: '#fff', // flat white background
       padding: 24,
-      paddingTop: 60,
+      paddingTop: 55,
     },
     backButton: {
       position: 'absolute',
-      top: 50,
+      top: 35,
       left: 20,
       zIndex: 1,
+      padding: 4, // no circle, just touch padding
     },
     mainTitle: {
       fontSize: 30,
@@ -30,6 +32,7 @@ export const createEmailLoginStyles = (theme) =>
       fontSize: 16,
       marginBottom: 16,
       color: theme.text,
+      backgroundColor: '#fff',
     },
     disclaimer: {
       fontSize: 13,
@@ -46,18 +49,19 @@ export const createEmailLoginStyles = (theme) =>
       paddingVertical: 14,
       borderRadius: 10,
       alignItems: 'center',
+      marginTop: 4,
     },
     buttonDisabled: {
       backgroundColor: theme.border,
     },
     buttonText: {
-      color: theme.background,
+      color: '#fff',
       fontWeight: 'bold',
       fontSize: 16,
     },
     linkText: {
       marginTop: 20,
-      color: theme.text,
+      color: theme.primary,
       textAlign: 'center',
       textDecorationLine: 'underline',
     },

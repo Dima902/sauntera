@@ -21,6 +21,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AuthInitGate from './src/components/AuthInitGate';
 import { StatusBar } from 'expo-status-bar';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import * as WebBrowser from 'expo-web-browser';
+WebBrowser.maybeCompleteAuthSession();
 
 // Silence noisy logs in dev
 console.warn = ((originalWarn) => (...args) => {

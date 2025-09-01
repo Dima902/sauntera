@@ -1,7 +1,6 @@
 // utils/locationNormalize.js
-// Canonicalizes "City, Admin, Country" to full names (ISO-like) and builds a stable compare key.
-// Fix: robust title-case for spaces, hyphens, slashes, and apostrophes so Firestore equality matches.
-// Supports common US/Canada abbreviations and aliases (e.g., "USA" -> "United States", "NY" -> "New York")
+// Canonicalizes "City, Admin, Country" to stable names and strips "Old ..." neighborhood prefixes.
+// Supports US/Canada abbreviations, aliases, and accent cleanup.
 
 const COUNTRY_ALIASES = {
   'us': 'United States',
@@ -35,6 +34,22 @@ const ADMIN_MAP_CA = {
   sk: 'Saskatchewan', yt: 'Yukon'
 };
 
+// --- Old City prefix handling ---
+const STRIP_PREFIXES = [
+  "old",
+  "old town",
+  "olde town",
+  "old towne",
+  "olde towne",
+  "old city",
+  "old village",
+];
+
+const DO_NOT_STRIP_CITY_EXCEPTIONS = new Set([
+  "Old Town", "Old Fort", "Old Bridge", "Old Greenwich",
+  "Old Westbury", "Old Saybrook", "Old Forge", "Olds",
+]);
+
 function clean(s) {
   return String(s || '')
     .replace(/\s+/g, ' ')
@@ -45,21 +60,29 @@ function clean(s) {
 function lc(s) { return clean(s).toLowerCase(); }
 
 /**
- * Title-case city/admin tokens across word boundaries, hyphens and slashes.
- * Also handles simple apostrophe cases like O'Neill.
- * e.g. "whitchurch-stouffville" -> "Whitchurch-Stouffville"
- *      "guelph/eramosa" -> "Guelph/Eramosa"
+ * Title-case geo strings (spaces, hyphens, slashes, apostrophes).
  */
 function titleCaseGeo(s) {
   const str = clean(s).toLowerCase();
-
-  // Capitalize first letter after start, space, hyphen, or slash
   let out = str.replace(/(^|[ \-/])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
-
-  // Capitalize letters after apostrophes (e.g., o'neill -> O'Neill)
   out = out.replace(/([A-Za-z])'([a-z])/g, (_, a, b) => `${a}'${b.toUpperCase()}`);
-
   return out;
+}
+
+function stripOldNeighborhoodPrefixes(cityRaw) {
+  const tokens = String(cityRaw || "").trim().split(/\s+/);
+  if (tokens.length <= 1) return cityRaw;
+  const lcTokens = tokens.map((t) => t.toLowerCase());
+  const candidates = STRIP_PREFIXES.slice().sort((a, b) => b.length - a.length).map((p) => p.split(/\s+/));
+  for (const pref of candidates) {
+    const maybe = lcTokens.slice(0, pref.length).join(" ");
+    if (maybe === pref.join(" ")) {
+      const remainder = tokens.slice(pref.length).join(" ").trim();
+      if (remainder) return remainder;
+      break;
+    }
+  }
+  return cityRaw;
 }
 
 export function canonicalCountry(countryRaw) {
@@ -86,13 +109,15 @@ export function canonicalAdmin(adminRaw, countryFull) {
   return titleCaseGeo(adminRaw);
 }
 
-// Simple city canonicalization: no NYC borough collapsing
 export function canonicalCity(cityRaw, adminFull, countryFull) {
   const cityClean = clean(cityRaw);
-  return titleCaseGeo(cityClean);
+  const cityTitle = titleCaseGeo(cityClean);
+  if (!DO_NOT_STRIP_CITY_EXCEPTIONS.has(cityTitle)) {
+    return titleCaseGeo(stripOldNeighborhoodPrefixes(cityClean));
+  }
+  return cityTitle;
 }
 
-// Parse "City, Admin, Country" or variants into parts
 export function parseLocationString(s) {
   const parts = clean(s).split(',').map(p => clean(p));
   if (parts.length === 1) return { city: parts[0], admin: '', country: '' };

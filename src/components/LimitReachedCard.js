@@ -16,7 +16,7 @@ const LimitReachedCard = ({ isGuest, onLogin, onUpgrade }) => {
         onLogin();
       } else {
         // Fallback: go to your auth screen/stack
-        navigation.navigate('Login'); // or 'AuthStack' / 'Welcome' etc.
+        navigation.navigate('LoginScreen'); // or 'AuthStack' / 'Welcome' etc.
       }
     } else {
       if (typeof onUpgrade === 'function') {

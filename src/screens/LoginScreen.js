@@ -1,4 +1,4 @@
-// LoginScreen.js – SDK53 (updated for Google + Facebook)
+// LoginScreen.js – SDK53 (Google + Facebook + Phone)
 import React, { useEffect, useContext, useState, useMemo } from 'react';
 import {
   View,
@@ -15,11 +15,7 @@ import styles from '../styles/LoginScreenStyles';
 import * as Linking from 'expo-linking';
 
 export default function LoginScreen({ navigation }) {
-  const {
-    authLoading,          // from AuthContext
-    signInWithGoogle,
-    signInWithFacebook,
-  } = useContext(AuthContext);
+  const { authLoading, signInWithGoogle, signInWithFacebook, logout } = useContext(AuthContext);
 
   const [screenBootLoading, setScreenBootLoading] = useState(true);
 
@@ -28,13 +24,16 @@ export default function LoginScreen({ navigation }) {
     [authLoading, screenBootLoading]
   );
 
-  const handleGuestAccess = () => {
+  // Ensure guest path is truly guest: clear ANY lingering auth before navigating
+  const handleGuestAccess = async () => {
+    try {
+      await logout(); // clears both web + native sessions
+    } catch {}
     navigation.replace('HomeScreen');
   };
 
   useEffect(() => {
     let unsubscribe;
-
     (async () => {
       try {
         const auth = await getAuthInstance();
@@ -68,8 +67,6 @@ export default function LoginScreen({ navigation }) {
           style={[styles.googleloginButton, disableAll && { opacity: 0.6 }]}
           onPress={signInWithGoogle}
           disabled={disableAll}
-          accessibilityRole="button"
-          accessibilityLabel="Continue with Google"
         >
           <Ionicons name="logo-google" size={20} style={styles.iconLeft} />
           <Text style={styles.googleloginButtonText}>Continue with Google</Text>
@@ -79,28 +76,24 @@ export default function LoginScreen({ navigation }) {
           style={[styles.fbloginButton, disableAll && { opacity: 0.6 }]}
           onPress={signInWithFacebook}
           disabled={disableAll}
-          accessibilityRole="button"
-          accessibilityLabel="Continue with Facebook"
         >
           <FontAwesome5 name="facebook" size={20} color="#fff" style={styles.iconLeft} />
           <Text style={styles.fbloginButtonText}>Continue with Facebook</Text>
         </TouchableOpacity>
 
+        {/* PHONE LOGIN */}
         <TouchableOpacity
           style={styles.altLoginButton}
-          onPress={() => navigation.navigate('EmailLoginScreen')}
-          accessibilityRole="button"
-          accessibilityLabel="Use your email"
+          onPress={() => navigation.navigate('PhoneLoginScreen')}
+          disabled={disableAll}
         >
-          <Text style={styles.altLoginText}>Use your email</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="call" size={20} style={{ marginRight: 8, color: '#000000ff' }} />
+            <Text style={styles.altLoginText}>Use your phone</Text>
+          </View>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.altLoginButton}
-          onPress={handleGuestAccess}
-          accessibilityRole="button"
-          accessibilityLabel="Continue as guest"
-        >
+        <TouchableOpacity style={styles.altLoginButton} onPress={handleGuestAccess}>
           <Text style={styles.altLoginText}>Continue as guest</Text>
         </TouchableOpacity>
 

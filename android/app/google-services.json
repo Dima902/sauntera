@@ -1,0 +1,43 @@
+{
+  "project_info": {
+    "project_number": "450911057083",
+    "project_id": "happoria",
+    "storage_bucket": "happoria.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:450911057083:android:e0231fc9c76cf2ba5c659e",
+        "android_client_info": {
+          "package_name": "com.anonymous.frontend"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "450911057083-q7v91likrb17ofdvmruq83n160ht8js5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.anonymous.frontend",
+            "certificate_hash": "29d2ba803e02ad601947f94a9365912271f3de97"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9Izd3fIYYxEEqrB2R82ttI9crgZuBreM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "450911057083-hjl3qhno1boii7d2qeg9shu7socv8fc7.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

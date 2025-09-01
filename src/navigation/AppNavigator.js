@@ -19,6 +19,8 @@ import SettingsScreen from '../screens/SettingsScreen';
 import EmailLoginScreen from '../screens/EmailLoginScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import LegalScreen from '../screens/LegalScreen';
+import VerifyEmailScreen from '../screens/VerifyEmailScreen';
+import PhoneLoginScreen from '../screens/PhoneLoginScreen';;
 
 const Stack = createStackNavigator();
 
@@ -58,6 +60,8 @@ export default function AppNavigator() {
       <Stack.Screen name="EmailLoginScreen" component={withSafeArea(EmailLoginScreen)} />
       <Stack.Screen name="HistoryScreen" component={withSafeArea(HistoryScreen)} />
       <Stack.Screen name="LegalScreen" component={withSafeArea(LegalScreen)} />
+      <Stack.Screen name="PhoneLoginScreen" component={withSafeArea(PhoneLoginScreen)} />
+      <Stack.Screen name="VerifyEmail" component={VerifyEmailScreen} options={{ headerShown: false }} />
     </Stack.Navigator>
   );
 }

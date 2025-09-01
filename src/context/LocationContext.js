@@ -1,4 +1,4 @@
-// LocationContext.js – Revised with permission state, fallback region logic, and localStorage caching
+// LocationContext.js – normalized location handling (fixes norm.parts.city -> norm.city)
 
 import React, {
   createContext,
@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import debounce from 'lodash.debounce';
+import { normalizeLocationString } from '../utils/locationNormalize';
 
 export const LocationContext = createContext();
 
@@ -41,7 +42,7 @@ export const LocationProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [locationUpdatedAt, setLocationUpdatedAt] = useState(Date.now());
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
-  const refetchLocation = useRef(() => {}); // ← exposed externally
+  const refetchLocation = useRef(() => {});
 
   const debouncedSetUpdatedAt = useCallback(
     debounce(() => setLocationUpdatedAt(Date.now()), 300),
@@ -96,19 +97,20 @@ export const LocationProvider = ({ children }) => {
           longitude: deviceCoords.longitude,
         });
 
-        const { formattedLocation, shortLocation, countryCode } = data;
-        if (formattedLocation && shortLocation) {
-          setLocationState(formattedLocation);
-          setShortLocation(shortLocation);
-          setDetectedLocation(formattedLocation);
+        const { formattedLocation, shortLocation: shortFromAPI, countryCode } = data || {};
+        if (formattedLocation && (shortFromAPI || typeof shortFromAPI === 'string')) {
+          const norm = normalizeLocationString(formattedLocation);
+          setLocationState(norm.string);
+          setShortLocation(norm.city); // <- FIX
+          setDetectedLocation(norm.string);
           setCountryCode(countryCode || null);
           setLocationCoords({ lat: deviceCoords.latitude, lon: deviceCoords.longitude });
 
           await AsyncStorage.setItem(
             'lastLocation',
             JSON.stringify({
-              formattedLocation,
-              shortLocation,
+              formattedLocation: norm.string,
+              shortLocation: norm.city, // <- FIX
               coords: { lat: deviceCoords.latitude, lon: deviceCoords.longitude }
             })
           );
@@ -135,42 +137,39 @@ export const LocationProvider = ({ children }) => {
       }
     };
 
-    // Initial load
     detectLocation();
-
-    // Make callable externally
     refetchLocation.current = detectLocation;
   }, []);
 
   const setLocationAndCoords = useCallback(async (cityString) => {
     setLoading(true);
     try {
-      const response = await axios.post(`${BASE_URL}/geocodeFn`, {
-        location: cityString
-      });
-
+      const response = await axios.post(`${BASE_URL}/geocodeFn`, { location: cityString });
       const geo = response.data;
+      const norm = normalizeLocationString(cityString);
       if (geo && geo.lat && geo.lon) {
-        setLocationState(cityString);
-        setShortLocation(cityString.split(',')[0]);
+        setLocationState(norm.string);
+        setShortLocation(norm.city); // <- FIX
         setLocationCoords({ lat: geo.lat, lon: geo.lon });
 
         await AsyncStorage.setItem(
           'lastLocation',
           JSON.stringify({
-            formattedLocation: cityString,
-            shortLocation: cityString.split(',')[0],
+            formattedLocation: norm.string,
+            shortLocation: norm.city, // <- FIX
             coords: { lat: geo.lat, lon: geo.lon }
           })
         );
       } else {
-        setLocationState(cityString);
-        setShortLocation(cityString.split(',')[0]);
+        setLocationState(norm.string);
+        setShortLocation(norm.city); // <- FIX
         setLocationCoords(null);
         console.warn('❌ Geocoding failed for', cityString);
       }
     } catch (e) {
-      setLocationState(cityString);
+      const norm = normalizeLocationString(cityString);
+      setLocationState(norm.string);
+      setShortLocation(norm.city); // <- FIX
       setLocationCoords(null);
       console.error('❌ Error in setLocationAndCoords:', e);
     } finally {
@@ -203,7 +202,7 @@ export const LocationProvider = ({ children }) => {
       setExpandRadius,
       locationUpdatedAt,
       locationPermissionDenied,
-      refetchLocation, // ✅ exposed for reuse
+      refetchLocation,
     }}>
       {children}
     </LocationContext.Provider>

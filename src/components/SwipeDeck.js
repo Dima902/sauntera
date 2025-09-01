@@ -6,6 +6,7 @@ import { useNavigation } from "@react-navigation/native";
 import DateIdeaCard from "./DateIdeaCard";
 import LoadingCard from "./LoadingCard";
 import LimitReachedCard from "./LimitReachedCard";
+import { useUserStatus } from "../hooks/useUserStatus"; // NEW: fallback for isGuest
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const CARD_HEIGHT = 320;
@@ -75,8 +76,16 @@ const SwipeDeck = ({
   onCardPress,
   containerStyle,
   forceLockHeight = false,
+
+  // Preferred: parent passes these. If omitted, we fall back to useUserStatus().
+  isGuest,
+  onLogin,
+  onUpgrade,
 }) => {
   const navigation = useNavigation();
+  const { isGuest: hookIsGuest } = useUserStatus(); // NEW: hook fallback
+  const effectiveIsGuest = typeof isGuest === "boolean" ? isGuest : !!hookIsGuest;
+
   const baseInput = useMemo(() => (Array.isArray(data) ? data : ideas || []), [data, ideas]);
 
   // Baseline: filter junk & dedupe by id BEFORE building keys
@@ -218,7 +227,11 @@ const SwipeDeck = ({
       if (isLimitReachedItem(item)) {
         return (
           <ItemWrapper>
-            <LimitReachedCard />
+            <LimitReachedCard
+              isGuest={effectiveIsGuest}    // ensure correct label/action
+              onLogin={onLogin}             // optional; card has navigation fallback
+              onUpgrade={onUpgrade}         // optional; card has navigation fallback
+            />
           </ItemWrapper>
         );
       }
@@ -243,7 +256,7 @@ const SwipeDeck = ({
         </ItemWrapper>
       );
     },
-    [ItemWrapper, navigation, onCardPress]
+    [ItemWrapper, navigation, onCardPress, effectiveIsGuest, onLogin, onUpgrade]
   );
 
   const keyExtractor = useCallback(
