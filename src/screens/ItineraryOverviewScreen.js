@@ -1,4 +1,4 @@
-// ItineraryOverviewScreen.js – smooth delete (fade + LayoutAnimation), premium-aware FAB, undo countdown
+// src/screens/ItineraryOverviewScreen.js
 import React, { useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Linking, Animated,
@@ -12,19 +12,19 @@ import GuestPrompt from '../components/GuestPrompt';
 import MoveStepButtons from '../components/MoveStepButtons';
 import { useTheme } from '../styles/theme';
 import { createItineraryOverviewStyles } from '../styles/ItineraryOverviewStyles';
-import { getAuthInstance, db } from '../config/firebaseConfig';
+import { db } from '../config/firebaseConfig';
 import { LocationContext } from '../context/LocationContext';
 import { doc, getDoc, getDocs, collection } from 'firebase/firestore';
 import { TouchableOpacity as Touchable, TouchableNativeFeedback } from 'react-native';
 import { BlurView } from 'expo-blur';
 import PremiumUpsellSheet from '../components/PremiumUpsellSheet';
 import { useUserStatus } from '../hooks/useUserStatus';
+import { AuthContext } from '../context/AuthContext';
 
 const FREE_LIMIT = 2;
 const PREMIUM_LIMIT = 5;
 const DELETE_DELAY_MS = 2000;
 
-// Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -33,18 +33,14 @@ export default function ItineraryOverviewScreen({ navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => createItineraryOverviewStyles(theme), [theme]);
 
-  const {
-    itinerary, setItinerary, removeFromItinerary,
-    updateItineraryOrder, markStepCompleted
-  } = useContext(ItineraryContext);
+  const { itinerary, setItinerary, removeFromItinerary, updateItineraryOrder, markStepCompleted } =
+    useContext(ItineraryContext);
 
-  const { isPremium } = useUserStatus();
+  const { isPremium, isGuest } = useUserStatus();
+  const { user } = useContext(AuthContext);
   const { coords } = useContext(LocationContext);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [authInstance, setAuthInstance] = useState(null);
-  const [isGuest, setIsGuest] = useState(true);
-
   const [showUpsell, setShowUpsell] = useState(false);
 
   const [removingId, setRemovingId] = useState(null);
@@ -53,43 +49,32 @@ export default function ItineraryOverviewScreen({ navigation }) {
   const undoIntervalRef = useRef(null);
   const undoDeadlineRef = useRef(null);
 
-  // Per-item fade refs for smooth removal
   const fadeRefs = useRef({}); // id -> Animated.Value
-
   const maxSteps = isPremium ? PREMIUM_LIMIT : FREE_LIMIT;
 
-  useEffect(() => {
-    (async () => {
-      const auth = await getAuthInstance();
-      setAuthInstance(auth);
-      setIsGuest(!auth?.currentUser);
-    })();
-  }, []);
-
-  const loadSavedSteps = async () => {
-    if (!authInstance?.currentUser) return;
+  const loadSavedSteps = useCallback(async () => {
+    if (!user?.uid) return;
     try {
-      const ref = collection(db, `users/${authInstance.currentUser.uid}/savedSteps`);
+      const ref = collection(db, `users/${user.uid}/savedSteps`);
       const snapshot = await getDocs(ref);
       const fetched = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setItinerary(fetched);
     } catch (err) {
       console.error('❌ Failed to load saved steps:', err);
     }
-  };
+  }, [user?.uid, setItinerary]);
 
   useEffect(() => {
-    if (!isGuest && authInstance) {
+    if (!isGuest && user?.uid) {
       loadSavedSteps();
     }
-  }, [authInstance, isGuest]);
+  }, [isGuest, user?.uid, loadSavedSteps]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadSavedSteps().finally(() => setRefreshing(false));
-  }, [authInstance]);
+  }, [loadSavedSteps]);
 
-  // ---- Undo countdown helpers ----
   const clearUndoTimers = () => {
     if (undoIntervalRef.current) {
       clearInterval(undoIntervalRef.current);
@@ -105,17 +90,12 @@ export default function ItineraryOverviewScreen({ navigation }) {
     undoIntervalRef.current = setInterval(() => {
       const remaining = Math.max(0, (undoDeadlineRef.current ?? 0) - Date.now());
       setUndoRemainingMs(remaining);
-      if (remaining <= 0) {
-        clearUndoTimers();
-      }
+      if (remaining <= 0) clearUndoTimers();
     }, 100);
   };
 
-  useEffect(() => {
-    return () => clearUndoTimers();
-  }, []);
+  useEffect(() => () => clearUndoTimers(), []);
 
-  // Smooth layout transition helper
   const animateLayout = () => {
     LayoutAnimation.configureNext({
       duration: 220,
@@ -126,9 +106,7 @@ export default function ItineraryOverviewScreen({ navigation }) {
   };
 
   const handleRemoveStep = (item) => {
-    // schedule deletion after delay, allow undo
     const timeoutId = setTimeout(() => {
-      // Fade the row out first, then remove and animate the gap
       const fade = fadeRefs.current[item.id];
       if (fade) {
         Animated.timing(fade, { toValue: 0, duration: 160, useNativeDriver: true }).start(() => {
@@ -157,7 +135,6 @@ export default function ItineraryOverviewScreen({ navigation }) {
       setUndoStep(null);
       setRemovingId(null);
       clearUndoTimers();
-      // Restore fade in case it had started
       const fade = fadeRefs.current[undoStep.id];
       if (fade) {
         Animated.timing(fade, { toValue: 1, duration: 140, useNativeDriver: true }).start();
@@ -201,24 +178,6 @@ export default function ItineraryOverviewScreen({ navigation }) {
     </View>
   );
 
-  const renderEmptyState = () => (
-    <View style={[styles.emptyStateContainer, { marginTop: -5 }]}>
-      <Ionicons name="sparkles-outline" size={80} color={theme.primary} />
-      <Text style={styles.emptyText}>No steps added</Text>
-      <TouchableOpacity style={styles.ctaButton} onPress={() => navigation.navigate('HomeScreen')}>
-        <Text style={styles.ctaButtonText}>Start Planning</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  if (!authInstance) {
-    return (
-      <View style={styles.profilecontainer}>
-        <Text style={{ color: theme.text, padding: 20 }}>Loading...</Text>
-      </View>
-    );
-  }
-
   if (isGuest) {
     return (
       <View style={styles.profilecontainer}>
@@ -247,21 +206,28 @@ export default function ItineraryOverviewScreen({ navigation }) {
       <FlatList
         data={itinerary}
         keyExtractor={(item, index) => `${item.id}-${index}`}
-        ListEmptyComponent={renderEmptyState}
+        ListEmptyComponent={(
+          <View style={[styles.emptyStateContainer, { marginTop: -5 }]}>
+            <Ionicons name="sparkles-outline" size={80} color={theme.primary} />
+            <Text style={styles.emptyText}>No steps added</Text>
+            <TouchableOpacity style={styles.ctaButton} onPress={() => navigation.navigate('HomeScreen')}>
+              <Text style={styles.ctaButtonText}>Start Planning</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         ListHeaderComponent={<View style={{ height: itinerary.length < 2 ? 16 : 0 }} />}
         contentContainerStyle={{ paddingBottom: 60 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         renderItem={({ item, index }) => {
-          // init fade value per item
           if (!fadeRefs.current[item.id]) fadeRefs.current[item.id] = new Animated.Value(1);
           const isPendingRemoval = removingId === item.id;
 
           return (
             <Touchable
               onPress={async () => {
-                if (!authInstance?.currentUser) return;
+                if (!user?.uid) return;
                 try {
-                  const ref = doc(db, `users/${authInstance.currentUser.uid}/savedSteps`, item.id.toString());
+                  const ref = doc(db, `users/${user.uid}/savedSteps`, item.id.toString());
                   const snap = await getDoc(ref);
                   if (snap.exists()) {
                     const fullIdea = { id: snap.id, ...snap.data() };
@@ -317,7 +283,6 @@ export default function ItineraryOverviewScreen({ navigation }) {
                     >
                       <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 13 }}>Undo</Text>
                     </TouchableOpacity>
-                    {/* Countdown (blue text, integer seconds) */}
                     <Text style={{ color: theme.primary, fontWeight: '600', fontSize: 12 }}>
                       Deleting in {Math.ceil(undoRemainingMs / 1000)}s
                     </Text>
@@ -350,7 +315,6 @@ export default function ItineraryOverviewScreen({ navigation }) {
         scrollEnabled={itinerary.length >= 2}
       />
 
-      {/* FAB: Premium always allowed; Free allowed only if < 2 steps */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => {

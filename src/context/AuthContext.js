@@ -1,11 +1,11 @@
 // src/context/AuthContext.js
 import React, { createContext, useEffect, useState, useCallback } from 'react';
 import {
-  onAuthStateChanged,
-  signOut,
+  onAuthStateChanged as onWebAuthStateChanged,
+  signOut as webSignOut,
   GoogleAuthProvider,
   FacebookAuthProvider,
-  signInWithCredential,
+  signInWithCredential as webSignInWithCredential,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendEmailVerification,
@@ -24,10 +24,9 @@ import { makeRedirectUri, exchangeCodeAsync } from 'expo-auth-session';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import Constants from 'expo-constants';
 
-// Try to load native Firebase Auth at runtime (available in dev/prod builds, not Expo Go)
+// Try to load native Firebase Auth (@react-native-firebase/auth)
 let rnfbAuth = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   rnfbAuth = require('@react-native-firebase/auth').default;
 } catch {
   rnfbAuth = null;
@@ -38,9 +37,9 @@ WebBrowser.maybeCompleteAuthSession();
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(null);        // <-- single source of truth
   const [authLoading, setAuthLoading] = useState(true);
-  const [authRef, setAuthRef] = useState(null);
+  const [webAuth, setWebAuth] = useState(null);  // keep a ref for Google/Email flows
 
   const isExpoGo = Constants.appOwnership === 'expo';
 
@@ -91,43 +90,84 @@ export const AuthProvider = ({ children }) => {
     handleCodeInApp: false,
   };
 
-  // ----- INIT AUTH -----
-  useEffect(() => {
-    let unsubscribe;
-    (async () => {
-      const auth = await getAuthInstance();
-      setAuthRef(auth);
-      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-        setUser(firebaseUser);
-        setAuthLoading(false);
-
-        if (!firebaseUser) return;
-
-        try {
-          const userRef = doc(db, 'users', firebaseUser.uid);
-          const snap = await getDoc(userRef);
-          if (!snap.exists()) {
-            await setDoc(userRef, {
-              name: firebaseUser.displayName || '',
-              email: firebaseUser.email || '',
-              phone: firebaseUser.phoneNumber || '',
-              photoURL: firebaseUser.photoURL || '',
-              accountType: 'free',
-              createdAt: new Date().toISOString(),
-              providerIds: firebaseUser.providerData?.map((p) => p.providerId) || [],
-            });
-          }
-        } catch (e) {
-          console.error('Failed to upsert Firestore user:', e);
-        }
-      });
-    })();
-    return () => unsubscribe && unsubscribe();
+  // ---- helper: upsert Firestore profile for any FirebaseUser (web or native) ----
+  const upsertUserDoc = useCallback(async (firebaseUser) => {
+    if (!firebaseUser) return;
+    try {
+      const userRef = doc(db, 'users', firebaseUser.uid);
+      const snap = await getDoc(userRef);
+      if (!snap.exists()) {
+        await setDoc(userRef, {
+          name: firebaseUser.displayName || '',
+          email: firebaseUser.email || '',
+          phone: firebaseUser.phoneNumber || '',
+          photoURL: firebaseUser.photoURL || '',
+          accountType: 'free',
+          createdAt: new Date().toISOString(),
+          providerIds: firebaseUser.providerData?.map((p) => p.providerId) || [],
+        });
+      }
+    } catch (e) {
+      console.error('Failed to upsert Firestore user:', e);
+    }
   }, []);
 
-  // ----- GOOGLE → FIREBASE -----
+  // ----- INIT AUTH: subscribe to both and prefer native when present -----
   useEffect(() => {
-    if (!authRef) return;
+    let unsubWeb, unsubNative, mounted = true;
+
+    (async () => {
+      const auth = await getAuthInstance();       // web auth (uses AsyncStorage persistence)
+      if (!mounted) return;
+      setWebAuth(auth);
+
+      // web listener (for Google/Email flows)
+      unsubWeb = onWebAuthStateChanged(auth, async (webUser) => {
+        // If native is not signed in, use the web user
+        if (rnfbAuth) {
+          const nativeCurr = rnfbAuth().currentUser;
+          if (nativeCurr) {
+            // native takes precedence, ignore web in this case
+            setUser(nativeCurr);
+            upsertUserDoc(nativeCurr);
+            setAuthLoading(false);
+            return;
+          }
+        }
+        // Else fall back to web
+        setUser(webUser || null);
+        if (webUser) upsertUserDoc(webUser);
+        setAuthLoading(false);
+      });
+
+      // native listener (for Phone auth in dev/prod builds)
+      if (rnfbAuth) {
+        unsubNative = rnfbAuth().onAuthStateChanged(async (nativeUser) => {
+          if (nativeUser) {
+            setUser(nativeUser);
+            upsertUserDoc(nativeUser);
+          } else {
+            // Only clear to null if web is also null; otherwise web user stays
+            if (!auth.currentUser) setUser(null);
+          }
+          setAuthLoading(false);
+        });
+      } else {
+        // No native module available (e.g., Expo Go) – rely on web only
+        setAuthLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      unsubWeb && unsubWeb();
+      unsubNative && unsubNative();
+    };
+  }, [upsertUserDoc]);
+
+  // ----- GOOGLE → FIREBASE (web) -----
+  useEffect(() => {
+    if (!webAuth) return;
     (async () => {
       if (googleResponse?.type !== 'success') return;
       try {
@@ -154,16 +194,16 @@ export const AuthProvider = ({ children }) => {
         }
 
         const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(authRef, credential);
+        await webSignInWithCredential(webAuth, credential);
       } catch (err) {
         console.error('Google sign-in error:', err);
       }
     })();
-  }, [googleResponse, authRef]);
+  }, [googleResponse, webAuth, isExpoGo, googleAndroidNativeRedirect, googleRedirectUri, googleRequest, androidClientId, expoClientId]);
 
-  // ----- FACEBOOK → FIREBASE -----
+  // ----- FACEBOOK → FIREBASE (web) -----
   useEffect(() => {
-    if (!authRef) return;
+    if (!webAuth) return;
     if (fbResponse?.type === 'success') {
       const accessToken =
         fbResponse.authentication?.accessToken || fbResponse.params?.access_token;
@@ -172,11 +212,11 @@ export const AuthProvider = ({ children }) => {
         return;
       }
       const credential = FacebookAuthProvider.credential(accessToken);
-      signInWithCredential(authRef, credential).catch((err) =>
+      webSignInWithCredential(webAuth, credential).catch((err) =>
         console.error('Facebook sign-in error:', err)
       );
     }
-  }, [fbResponse, authRef]);
+  }, [fbResponse, webAuth]);
 
   // ----- PUBLIC API -----
   const signInWithGoogle = useCallback(() => {
@@ -189,11 +229,11 @@ export const AuthProvider = ({ children }) => {
     fbPromptAsync({ useProxy: true, preferEphemeralSession: true });
   }, [fbRequest, fbPromptAsync]);
 
-  // ----- EMAIL/PASSWORD -----
+  // ----- EMAIL/PASSWORD (web) -----
   const signUpWithEmail = useCallback(
     async ({ email, password, displayName }) => {
-      if (!authRef) throw new Error('Auth not ready');
-      const cred = await createUserWithEmailAndPassword(authRef, email.trim(), password);
+      if (!webAuth) throw new Error('Auth not ready');
+      const cred = await createUserWithEmailAndPassword(webAuth, email.trim(), password);
       if (displayName) {
         try {
           await updateProfile(cred.user, { displayName });
@@ -208,59 +248,59 @@ export const AuthProvider = ({ children }) => {
       }
       return cred.user;
     },
-    [authRef]
+    [webAuth]
   );
 
   const signInWithEmail = useCallback(
     async (email, password) => {
-      if (!authRef) throw new Error('Auth not ready');
-      const cred = await signInWithEmailAndPassword(authRef, email.trim(), password);
+      if (!webAuth) throw new Error('Auth not ready');
+      const cred = await signInWithEmailAndPassword(webAuth, email.trim(), password);
       return cred.user;
     },
-    [authRef]
+    [webAuth]
   );
 
   const resendEmailVerification = useCallback(async () => {
-    if (!authRef || !authRef.currentUser) throw new Error('Not signed in');
-    await sendEmailVerification(authRef.currentUser, actionCodeSettings);
-  }, [authRef]);
+    if (!webAuth || !webAuth.currentUser) throw new Error('Not signed in');
+    await sendEmailVerification(webAuth.currentUser, actionCodeSettings);
+  }, [webAuth]);
 
   const checkEmailVerified = useCallback(async () => {
-    if (!authRef || !authRef.currentUser) return false;
-    await reload(authRef.currentUser);
-    return !!authRef.currentUser.emailVerified;
-  }, [authRef]);
+    if (!webAuth || !webAuth.currentUser) return false;
+    await reload(webAuth.currentUser);
+    return !!webAuth.currentUser.emailVerified;
+  }, [webAuth]);
 
   const sendPasswordReset = useCallback(
     async (email) => {
-      if (!authRef) throw new Error('Auth not ready');
-      await sendPasswordResetEmail(authRef, email.trim(), actionCodeSettings);
+      if (!webAuth) throw new Error('Auth not ready');
+      await sendPasswordResetEmail(webAuth, email.trim(), actionCodeSettings);
     },
-    [authRef]
+    [webAuth]
   );
 
   const getProvidersForEmail = useCallback(
     async (email) => {
-      if (!authRef) throw new Error('Auth not ready');
-      return fetchSignInMethodsForEmail(authRef, email.trim());
+      if (!webAuth) throw new Error('Auth not ready');
+      return fetchSignInMethodsForEmail(webAuth, email.trim());
     },
-    [authRef]
+    [webAuth]
   );
 
   const linkEmailToCurrent = useCallback(
     async (email, password) => {
-      if (!authRef || !authRef.currentUser) throw new Error('Not signed in');
+      if (!webAuth || !webAuth.currentUser) throw new Error('Not signed in');
       const credential = EmailAuthProvider.credential(email.trim(), password);
-      const result = await linkWithCredential(authRef.currentUser, credential);
+      const result = await linkWithCredential(webAuth.currentUser, credential);
       return result.user;
     },
-    [authRef]
+    [webAuth]
   );
 
   // ----- PHONE AUTH (native-first; unavailable in Expo Go) -----
   const signInWithPhone = useCallback(async (phoneNumber) => {
     if (rnfbAuth) {
-      return rnfbAuth().signInWithPhoneNumber(phoneNumber);
+      return rnfbAuth().signInWithPhoneNumber(phoneNumber); // returns a confirmation object
     }
     const err = new Error(
       'Phone auth requires a development or production build that includes @react-native-firebase/auth. It is not available in Expo Go.'
@@ -272,32 +312,25 @@ export const AuthProvider = ({ children }) => {
   const confirmPhoneCode = useCallback(async (confirmation, code) => {
     if (!confirmation) throw new Error('No confirmation object');
     if (confirmation && typeof confirmation.confirm === 'function') {
-      return confirmation.confirm(code);
+      return confirmation.confirm(code); // signs in native; our unified listener will pick it up
     }
     throw new Error('Invalid confirmation object for phone auth.');
   }, []);
 
   // ----- LOG OUT (sign out of BOTH web and native) -----
   const logout = useCallback(async () => {
-    // Sign out web
     try {
-      if (authRef) {
-        await signOut(authRef);
-      }
+      if (webAuth) await webSignOut(webAuth);
     } catch (e) {
       console.error('Web logout error:', e);
     }
-    // Sign out native (if present)
     try {
-      if (rnfbAuth) {
-        await rnfbAuth().signOut();
-      }
+      if (rnfbAuth) await rnfbAuth().signOut();
     } catch (e) {
       console.error('Native logout error:', e);
     }
-    // small delay so onAuthStateChanged fires before UI navigation proceeds
     await new Promise((r) => setTimeout(r, 50));
-  }, [authRef]);
+  }, [webAuth]);
 
   return (
     <AuthContext.Provider
@@ -313,7 +346,7 @@ export const AuthProvider = ({ children }) => {
         sendPasswordReset,
         getProvidersForEmail,
         linkEmailToCurrent,
-        logout,             // <-- updated
+        logout,
         signInWithPhone,
         confirmPhoneCode,
       }}

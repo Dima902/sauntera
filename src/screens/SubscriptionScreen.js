@@ -1,6 +1,7 @@
-// SubscriptionScreen.js - dark mode compatible
+// src/screens/SubscriptionScreen.js
+// Revised: integrates with withIapPurchase + useUserStatus
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as RNIap from 'react-native-iap';
@@ -8,6 +9,8 @@ import { PRODUCTS } from '../constants/Products';
 import useCountdown from '../hooks/useCountdown';
 import { useTheme } from '../styles/theme';
 import { createSubscriptionScreenStyles } from '../styles/SubscriptionScreenStyles';
+import { useUserStatus } from '../hooks/useUserStatus';
+import { withIapPurchase } from '../utils/iapUtils';
 
 const SubscriptionScreen = ({ navigation }) => {
   const { days, hours, minutes, seconds } = useCountdown();
@@ -15,6 +18,8 @@ const SubscriptionScreen = ({ navigation }) => {
   const [products, setProducts] = useState([]);
   const [subscriptions, setSubscriptions] = useState([]);
   const [purchasing, setPurchasing] = useState(false);
+
+  const { userId, isPremium } = useUserStatus();
 
   const theme = useTheme();
   const styles = useMemo(() => createSubscriptionScreenStyles(theme), [theme]);
@@ -36,18 +41,23 @@ const SubscriptionScreen = ({ navigation }) => {
     setupIAP();
   }, []);
 
-  const handlePurchase = async (productId) => {
-    try {
-      setPurchasing(true);
-      const purchase = await RNIap.requestPurchase(productId);
-      Alert.alert('Success', `Purchase complete: ${purchase.productId}`);
-    } catch (e) {
-      if (!e.userCancelled) {
-        Alert.alert('Purchase Error', e.message);
-      }
-    } finally {
-      setPurchasing(false);
-    }
+  const handleSubscribe = (sku) => {
+    setPurchasing(true);
+    withIapPurchase({
+      sku,
+      uid: userId,
+      onProcessing: () => {
+        console.log('Processing purchase...');
+      },
+      onDone: () => {
+        setPurchasing(false);
+        Alert.alert('Success', 'Purchase sent for verification. Your Premium will unlock shortly.');
+      },
+      onError: (e) => {
+        setPurchasing(false);
+        Alert.alert('Purchase Error', e?.message || 'Something went wrong');
+      },
+    });
   };
 
   const isSubAvailable = subscriptions[0];
@@ -70,7 +80,14 @@ const SubscriptionScreen = ({ navigation }) => {
 
       <View style={styles.featureCard}>
         <Text style={styles.sectionTitle}>What You Get:</Text>
-        {["Unlimited saved date ideas","Unlimited steps in date plans","Smart AI recommendations","All categories unlocked","Map view, directions, and booking","Insider reviews & local secrets"].map((text, idx) => (
+        {[
+          "Unlimited saved date ideas",
+          "Unlimited steps in date plans",
+          "Smart AI recommendations",
+          "All categories unlocked",
+          "Map view, directions, and booking",
+          "Insider reviews & local secrets"
+        ].map((text, idx) => (
           <View style={styles.featureRow} key={idx}>
             <Ionicons name="checkmark-circle" size={20} color={theme.success || '#28a745'} />
             <Text style={styles.featureText}>{text}</Text>
@@ -82,8 +99,8 @@ const SubscriptionScreen = ({ navigation }) => {
 
       <TouchableOpacity
         style={{ marginHorizontal: 16, marginTop: 10, minHeight: 48, borderRadius: 10, overflow: 'hidden' }}
-        onPress={() => isSubAvailable && !purchasing && handlePurchase(PRODUCTS.SUBSCRIPTION)}
-        disabled={!isSubAvailable || purchasing}
+        onPress={() => isSubAvailable && !purchasing && handleSubscribe(PRODUCTS.SUBSCRIPTION)}
+        disabled={!isSubAvailable || purchasing || isPremium}
         accessibilityLabel="Start Free Trial"
       >
         <LinearGradient
@@ -98,15 +115,15 @@ const SubscriptionScreen = ({ navigation }) => {
             <Ionicons name="star" size={18} color="#222" style={{ marginRight: 10 }} />
           )}
           <Text style={styles.upgradeButtonText}>
-            Start Free Trial – {subscriptions[0]?.localizedPrice || '$4.99/mo'}
+            {isPremium ? 'Premium Active' : `Start Free Trial – ${subscriptions[0]?.localizedPrice || '$4.99/mo'}`}
           </Text>
         </LinearGradient>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={{ marginHorizontal: 16, marginTop: 12, minHeight: 48, borderRadius: 10, overflow: 'hidden' }}
-        onPress={() => isOneTimeAvailable && !purchasing && handlePurchase(PRODUCTS.LIFETIME)}
-        disabled={!isOneTimeAvailable || purchasing}
+        onPress={() => isOneTimeAvailable && !purchasing && handleSubscribe(PRODUCTS.LIFETIME)}
+        disabled={!isOneTimeAvailable || purchasing || isPremium}
         accessibilityLabel="One-Time Purchase"
       >
         <LinearGradient
@@ -121,13 +138,14 @@ const SubscriptionScreen = ({ navigation }) => {
             <Ionicons name="diamond" size={18} color="#fff" style={{ marginRight: 10 }} />
           )}
           <Text style={styles.oneTimeButtonText}>
-            One-Time Purchase – {products[0]?.localizedPrice || '$19.99'}
+            {isPremium ? 'Premium Active' : `One-Time Purchase – ${products[0]?.localizedPrice || '$19.99'}`}
           </Text>
         </LinearGradient>
       </TouchableOpacity>
 
       <Text style={styles.specialPriceText}>
-        Pay once: <Text style={{ fontWeight: 'bold' }}>$19.99</Text> <Text style={{ color: '#aaa', textDecorationLine: 'line-through' }}>$39.99</Text>
+        Pay once: <Text style={{ fontWeight: 'bold' }}>$19.99</Text>{' '}
+        <Text style={{ color: '#aaa', textDecorationLine: 'line-through' }}>$39.99</Text>
       </Text>
 
       <TouchableOpacity onPress={() => navigation.goBack()} style={styles.cancelButton}>

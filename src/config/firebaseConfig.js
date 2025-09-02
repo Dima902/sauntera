@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyA-BuWXUPJgZ_ku0Y08Uy_Hse12jsUQNsE',
-  authDomain: 'happoria.firebaseapp.com',
+  authDomain: 'sauntera.com',
   projectId: 'happoria',
   storageBucket: 'happoria.firebasestorage.app',
   messagingSenderId: '450911057083',

@@ -1,34 +1,27 @@
-//LoginScreenStyles.js
+// LoginScreenStyles.js
 import { StyleSheet } from 'react-native';
 
 const styles = StyleSheet.create({
-  disclaimerWrapper: {
-    marginTop: 20,
-    paddingHorizontal: 24,
-  },
-  disclaimerText: {
-    color: '#fff',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  linkText: {
-    color: '#add8e6',
-    textDecorationLine: 'underline',
-  },  
   container: {
-    flex: 1,
+    flex: 1, // allow ImageBackground to fill the whole screen
   },
+
+  // Semi-transparent color wash over the bg image
   overlay: {
     flex: 1,
     width: '100%',
-    justifyContent: 'center',
+    justifyContent: 'space-between', // push disclaimer down
     alignItems: 'center',
     backgroundColor: 'rgba(0, 29, 58, 0.44)',
     paddingHorizontal: 30,
-    paddingTop: 80,
-    paddingBottom: 30,
+    // NOTE: paddingTop/paddingBottom now come from safe-area insets in the component
   },
+
+  contentWrapper: {
+    alignItems: 'center',
+    width: '100%',
+  },
+
   logoText: {
     fontSize: 60,
     fontWeight: 'bold',
@@ -37,48 +30,14 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginTop: 60,
   },
+
   sloganText: {
     fontSize: 20,
     color: '#eee',
     marginBottom: 90,
     textTransform: 'uppercase',
   },
-  googleloginButton: {
-    flexDirection: 'row',
-    //backgroundColor: 'white',
-    backgroundColor: 'rgba(255, 255, 255, 0.78)',
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    marginBottom: 12,
-    gap: 10,
-  },
-  fbloginButton: {
-    flexDirection: 'row',
-    backgroundColor: '#1877F2',
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    marginBottom: 12,
-    gap: 10,
-  },
-  googleloginButtonText: {
-    color: 'black',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  fbloginButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  iconLeft: {
-    marginRight: 8,
-  },
+
   altLoginButton: {
     paddingVertical: 12,
     borderWidth: 1,
@@ -87,7 +46,6 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     marginTop: 10,
-    //backgroundColor: 'white',
     backgroundColor: 'rgba(255, 255, 255, 0.78)',
   },
   altLoginText: {
@@ -95,12 +53,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
   },
+
+  disclaimerWrapper: {
+    paddingHorizontal: 24,
+    // bottom spacing comes from safe area via container paddingBottom
+  },
   disclaimerText: {
     fontSize: 12,
     color: '#ccc',
     textAlign: 'center',
-    marginTop: 30,
-    paddingHorizontal: 10,
+    lineHeight: 18,
+  },
+  linkText: {
+    color: '#add8e6',
+    textDecorationLine: 'underline',
   },
 });
 
