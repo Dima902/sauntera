@@ -1,9 +1,8 @@
 // src/screens/SavedScreen.js
-// SavedScreen – graceful empty/error states + pull-to-refresh
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, Image, TouchableOpacity,
-  TouchableNativeFeedback, Platform, RefreshControl
+  TouchableNativeFeedback, Platform, Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getAuthInstance, db } from '../config/firebaseConfig';
@@ -14,6 +13,14 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '../styles/theme';
 import { createSavedScreenStyles } from '../styles/SavedScreenStyles';
 
+// Try to load native Firebase Auth (phone auth path)
+let rnfbAuth = null;
+try {
+  rnfbAuth = require('@react-native-firebase/auth').default;
+} catch {
+  rnfbAuth = null;
+}
+
 const DELETE_DELAY_MS = 4000;
 
 export default function SavedScreen({ navigation }) {
@@ -22,16 +29,13 @@ export default function SavedScreen({ navigation }) {
 
   const [savedIdeas, setSavedIdeas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [removingId, setRemovingId] = useState(null);
   const [undoItem, setUndoItem] = useState(null);
   const [undoRemainingMs, setUndoRemainingMs] = useState(0);
-  const [isGuest, setIsGuest] = useState(true);
-  const [loadError, setLoadError] = useState(null); // string | null
-
   const undoIntervalRef = useRef(null);
   const undoDeadlineRef = useRef(null);
-  const mountedRef = useRef(true);
+  const [isGuest, setIsGuest] = useState(true);
+  const [userId, setUserId] = useState('guest');
 
   const clearUndoTimers = () => {
     if (undoIntervalRef.current) {
@@ -47,118 +51,131 @@ export default function SavedScreen({ navigation }) {
     if (undoIntervalRef.current) clearInterval(undoIntervalRef.current);
     undoIntervalRef.current = setInterval(() => {
       const remaining = Math.max(0, (undoDeadlineRef.current ?? 0) - Date.now());
-      if (!mountedRef.current) return;
       setUndoRemainingMs(remaining);
-      if (remaining <= 0) clearUndoTimers();
+      if (remaining <= 0) {
+        clearUndoTimers();
+      }
     }, 100);
   };
 
+  useEffect(() => () => clearUndoTimers(), []);
+
+  // Unified auth subscription: prefer native (phone), fall back to web
   useEffect(() => {
-    mountedRef.current = true;
+    let unsubWeb;
+    let unsubNative;
+
+    (async () => {
+      const webAuth = await getAuthInstance();
+
+      // Web listener (email/google, or Expo Go fallback)
+      unsubWeb = onAuthStateChanged(webAuth, (webUser) => {
+        // If native is present and signed in, native handler will set state
+        if (!rnfbAuth) {
+          const signedIn = !!webUser;
+          setIsGuest(!signedIn);
+          setUserId(webUser?.uid || 'guest');
+          if (signedIn) fetchSavedIdeas(webUser.uid);
+          else {
+            setSavedIdeas([]);
+            setLoading(false);
+          }
+        }
+      });
+
+      // Native listener (phone auth path)
+      if (rnfbAuth) {
+        unsubNative = rnfbAuth().onAuthStateChanged((nativeUser) => {
+          const signedIn = !!nativeUser;
+          setIsGuest(!signedIn);
+          setUserId(nativeUser?.uid || 'guest');
+          if (signedIn) fetchSavedIdeas(nativeUser.uid);
+          else {
+            setSavedIdeas([]);
+            setLoading(false);
+          }
+        });
+
+        // If already signed in natively on mount
+        const maybeNative = rnfbAuth().currentUser;
+        if (maybeNative) {
+          setIsGuest(false);
+          setUserId(maybeNative.uid);
+          fetchSavedIdeas(maybeNative.uid);
+        } else {
+          // else use current web (if any)
+          const maybeWeb = webAuth.currentUser;
+          const signedIn = !!maybeWeb;
+          setIsGuest(!signedIn);
+          setUserId(maybeWeb?.uid || 'guest');
+          if (signedIn) fetchSavedIdeas(maybeWeb.uid);
+          else setLoading(false);
+        }
+      } else {
+        // No native module: rely on web only
+        const maybeWeb = webAuth.currentUser;
+        const signedIn = !!maybeWeb;
+        setIsGuest(!signedIn);
+        setUserId(maybeWeb?.uid || 'guest');
+        if (signedIn) fetchSavedIdeas(maybeWeb.uid);
+        else setLoading(false);
+      }
+    })();
+
     return () => {
-      mountedRef.current = false;
-      clearUndoTimers();
+      try { unsubWeb && unsubWeb(); } catch {}
+      try { unsubNative && unsubNative(); } catch {}
     };
   }, []);
 
-  const fetchSavedIdeas = useCallback(async (user, { isRefresh = false } = {}) => {
-    if (!user) {
-      if (mountedRef.current) {
-        setSavedIdeas([]);
-        setLoading(false);
-        setRefreshing(false);
-        setLoadError(null);
+  // Refresh when screen regains focus
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', async () => {
+      if (!isGuest && userId && userId !== 'guest') {
+        fetchSavedIdeas(userId);
       }
-      return;
-    }
+    });
+    return unsubscribe;
+  }, [navigation, isGuest, userId]);
 
-    if (!isRefresh) setLoading(true);
-    else setRefreshing(true);
-
+  const fetchSavedIdeas = async (uid) => {
+    setLoading(true);
     try {
-      setLoadError(null);
-
-      const userSavedIdeasRef = collection(db, `users/${user.uid}/savedIdeas`);
+      const userSavedIdeasRef = collection(db, `users/${uid}/savedIdeas`);
       const querySnapshot = await getDocs(userSavedIdeasRef);
+      const rawIdeas = querySnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      const rawIdeas = querySnapshot.docs.map(d => ({ id: d.id, ...d.data?.() }));
-
-      // Dedup by website
       const seenWebsites = new Set();
-      const uniqueIdeas = rawIdeas.filter(idea => {
-        const site = idea?.website?.trim();
-        if (!site) return true;
-        if (seenWebsites.has(site)) return false;
-        seenWebsites.add(site);
+      const uniqueIdeas = rawIdeas.filter((idea) => {
+        if (idea.website && seenWebsites.has(idea.website)) return false;
+        if (idea.website) seenWebsites.add(idea.website);
         return true;
       });
 
-      // Sort newest first
+      // Sort by createdAt (Timestamp) if present
       uniqueIdeas.sort((a, b) => {
-        const aTs = a?.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-        const bTs = b?.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-        return bTs - aTs;
+        const dateA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const dateB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return dateB - dateA;
       });
 
-      if (!mountedRef.current) return;
       setSavedIdeas(uniqueIdeas);
-    } catch (err) {
-      // Graceful handling: no alert, just a retry UI
-      if (!mountedRef.current) return;
-      setSavedIdeas([]); // ensures FlatList/empty state renders cleanly
-      setLoadError('Couldn’t load your saved ideas. Please try again.');
-      console.error('❌ Error fetching saved ideas:', err);
+    } catch (error) {
+      console.error('❌ Error fetching saved ideas:', error);
+      Alert.alert('Error', 'Failed to load saved ideas.');
     } finally {
-      if (!mountedRef.current) return;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, []);
-
-  // Listen for auth changes
-  useEffect(() => {
-    let unsubscribe;
-    (async () => {
-      const auth = await getAuthInstance();
-      unsubscribe = onAuthStateChanged(auth, (user) => {
-        setIsGuest(!user);
-        if (user) fetchSavedIdeas(user);
-        else {
-          setSavedIdeas([]);
-          setLoading(false);
-          setLoadError(null);
-        }
-      });
-    })();
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [fetchSavedIdeas]);
-
-  // Reload on screen focus
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', async () => {
-      const auth = await getAuthInstance();
-      if (auth.currentUser) fetchSavedIdeas(auth.currentUser, { isRefresh: true });
-    });
-    return unsubscribe;
-  }, [navigation, fetchSavedIdeas]);
-
-  const onRefresh = useCallback(async () => {
-    const auth = await getAuthInstance();
-    if (auth.currentUser) fetchSavedIdeas(auth.currentUser, { isRefresh: true });
-  }, [fetchSavedIdeas]);
+  };
 
   const handleRemoveIdea = (idea) => {
     const timeoutId = setTimeout(async () => {
-      const auth = await getAuthInstance();
-      const user = auth.currentUser;
-      if (!user) return;
+      const uid = userId;
+      if (!uid) return;
 
       try {
-        await deleteDoc(doc(db, `users/${user.uid}/savedIdeas`, idea.id));
-        if (!mountedRef.current) return;
-        setSavedIdeas(prev => prev.filter(i => i.id !== idea.id));
+        await deleteDoc(doc(db, `users/${uid}/savedIdeas`, idea.id));
+        setSavedIdeas((prev) => prev.filter((i) => i.id !== idea.id));
         setUndoItem(null);
         setRemovingId(null);
       } catch (error) {
@@ -183,22 +200,12 @@ export default function SavedScreen({ navigation }) {
 
   const Touchable = Platform.OS === 'android' ? TouchableNativeFeedback : TouchableOpacity;
 
-  const EmptyState = ({ message, showRetry }) => (
+  const renderEmptyState = () => (
     <View style={styles.emptyStateContainer}>
       <Ionicons name="sparkles-outline" size={80} color={theme.primary} />
-      <Text style={styles.emptyText}>{message || 'No saved ideas yet'}</Text>
-
-      {showRetry ? (
-        <TouchableOpacity
-          style={[styles.ctaButton, { marginTop: 10 }]}
-          onPress={onRefresh}
-        >
-          <Text style={styles.ctaButtonText}>Retry</Text>
-        </TouchableOpacity>
-      ) : null}
-
+      <Text style={styles.emptyText}>No saved ideas yet</Text>
       <TouchableOpacity
-        style={[styles.ctaButton, { marginTop: 10 }]}
+        style={styles.ctaButton}
         onPress={() => navigation.navigate('HomeScreen')}
       >
         <Text style={styles.ctaButtonText}>Explore Ideas</Text>
@@ -209,11 +216,14 @@ export default function SavedScreen({ navigation }) {
   if (isGuest) {
     return (
       <View style={styles.profilecontainer}>
-        <View style={styles.guestProfileContainer}>
+        <View className="guestProfileContainer" style={styles.guestProfileContainer}>
           <Ionicons name="person-circle-outline" size={80} color={theme.primary} />
           <Text style={styles.guestProfileText}>
             You’re exploring as a guest.{'\n'}
-            <Text style={styles.guestProfileLink} onPress={() => navigation.navigate('LoginScreen')}>
+            <Text
+              style={styles.guestProfileLink}
+              onPress={() => navigation.navigate('LoginScreen')}
+            >
               Sign up to save your favorite ideas!
             </Text>
           </Text>
@@ -231,111 +241,84 @@ export default function SavedScreen({ navigation }) {
     );
   }
 
-  const renderItem = ({ item }) => (
-    <Touchable
-      onPress={() => navigation.navigate('DateIdeaDetails', { idea: item })}
-      background={Platform.OS === 'android' ? TouchableNativeFeedback.Ripple('#ccc', false) : undefined}
-    >
-      <View style={styles.savedcard}>
-        {removingId === item.id && (
-          <BlurView
-            intensity={90}
-            tint="light"
-            style={{
-              position: 'absolute',
-              top: 0, left: 0, right: 0, bottom: 0,
-              borderRadius: 10, overflow: 'hidden', zIndex: 2,
-              justifyContent: 'center', alignItems: 'center',
-            }}
-          >
-            <TouchableOpacity
-              onPress={handleUndo}
-              style={{
-                backgroundColor: theme.primary,
-                paddingVertical: 6,
-                paddingHorizontal: 14,
-                borderRadius: 20,
-                marginBottom: 6,
-              }}
-            >
-              <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 13 }}>Undo</Text>
-            </TouchableOpacity>
-            <Text style={{ color: theme.primary, fontWeight: '600', fontSize: 12 }}>
-              Deleting in {Math.ceil(undoRemainingMs / 1000)}s
-            </Text>
-          </BlurView>
-        )}
-
-        <Image
-          style={styles.savedcardImage}
-          source={{
-            uri:
-              item?.image?.trim?.() ||
-              'https://via.placeholder.com/800x600?text=Saved+Idea',
-          }}
-        />
-        <View style={styles.savedcardContent}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={styles.savedcardTitle}>{item?.title || 'Untitled idea'}</Text>
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation?.();
-                handleRemoveIdea(item);
-              }}
-              style={styles.saveddeleteButton}
-            >
-              <Ionicons name="trash-outline" size={20} color="red" />
-            </TouchableOpacity>
-          </View>
-          {item?.description ? (
-            <Text style={styles.savedcardDescription}>{item.description}</Text>
-          ) : null}
-          <Text style={styles.savedcardPrice}>Price: {item?.price || 'Unknown'}</Text>
-        </View>
-      </View>
-    </Touchable>
-  );
-
   return (
     <View style={styles.profilecontainer}>
       <Text style={styles.savedtitle}>Saved Date Ideas</Text>
 
-      {/* When loading, keep layout stable (no alerts). */}
       {loading ? (
-        <FlatList
-          data={[]}
-          keyExtractor={() => 'skeleton'}
-          ListEmptyComponent={<EmptyState message="Loading your saved list…" />}
-          contentContainerStyle={styles.savedlistContainer}
-          refreshControl={
-            <RefreshControl refreshing={false} onRefresh={onRefresh} />
-          }
-        />
+        <View style={{ flex: 1 }} />
       ) : savedIdeas.length > 0 ? (
         <FlatList
           data={savedIdeas}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.savedlistContainer}
-          renderItem={renderItem}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
+          renderItem={({ item }) => (
+            <Touchable
+              onPress={() => navigation.navigate('DateIdeaDetails', { idea: item })}
+              background={
+                Platform.OS === 'android'
+                  ? TouchableNativeFeedback.Ripple('#ccc', false)
+                  : undefined
+              }
+            >
+              <View style={styles.savedcard}>
+                {removingId === item.id && (
+                  <BlurView
+                    intensity={90}
+                    tint="light"
+                    style={{
+                      position: 'absolute',
+                      top: 0, left: 0, right: 0, bottom: 0,
+                      borderRadius: 10, overflow: 'hidden', zIndex: 2,
+                      justifyContent: 'center', alignItems: 'center',
+                    }}
+                  >
+                    <TouchableOpacity
+                      onPress={handleUndo}
+                      style={{
+                        backgroundColor: theme.primary,
+                        paddingVertical: 6,
+                        paddingHorizontal: 14,
+                        borderRadius: 20,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 13 }}>
+                        Undo
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: theme.primary, fontWeight: '600', fontSize: 12 }}>
+                      Deleting in {Math.ceil(undoRemainingMs / 1000)}s
+                    </Text>
+                  </BlurView>
+                )}
+
+                <Image
+                  style={styles.savedcardImage}
+                  source={{ uri: item.image || 'https://via.placeholder.com/400x300' }}
+                />
+                <View style={styles.savedcardContent}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.savedcardTitle}>{item.title}</Text>
+                    <TouchableOpacity
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        handleRemoveIdea(item);
+                      }}
+                      style={styles.saveddeleteButton}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="red" />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.savedcardDescription}>{item.description}</Text>
+                  <Text style={styles.savedcardPrice}>Price: {item.price || 'Unknown'}</Text>
+                </View>
+              </View>
+            </Touchable>
+          )}
         />
       ) : (
-        <FlatList
-          data={[]}
-          keyExtractor={() => 'empty'}
-          ListEmptyComponent={
-            <EmptyState
-              message={loadError || 'No saved ideas yet'}
-              showRetry={!!loadError}
-            />
-          }
-          contentContainerStyle={styles.savedlistContainer}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        />
+        renderEmptyState()
       )}
 
       <View style={styles.bottomNavWrapper}>

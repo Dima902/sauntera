@@ -1,6 +1,6 @@
-// saveItineraryStep.js - refactored 24-Apr-2025. 10.21pm
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebaseConfig';
+// src/utils/saveItineraryStep.js — Use getAuthInstance() correctly + return boolean
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuthInstance, db } from '../config/firebaseConfig';
 
 /**
  * Saves a step to the user's savedSteps collection in Firestore.
@@ -10,25 +10,33 @@ import { auth, db } from '../config/firebaseConfig';
  */
 export const saveStepToFirebase = async (step, userOverride = null) => {
   try {
-    const user = userOverride || auth.currentUser;
+    const auth = await getAuthInstance();
+    const user = userOverride || auth?.currentUser;
     if (!user) {
       console.warn('saveStepToFirebase: No authenticated user.');
       return false;
     }
 
-    // Prefer step.id, otherwise generate a unique ID
     let stepId = step.id;
     if (!stepId) {
       if (typeof crypto !== 'undefined' && crypto.randomUUID) {
         stepId = crypto.randomUUID();
       } else {
-        stepId = `${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+        stepId = `${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
       }
     }
 
     const stepRef = doc(db, `users/${user.uid}/savedSteps`, stepId);
-    await setDoc(stepRef, { ...step, id: stepId }, { merge: true });
-    // Optionally: console.log(`✅ Saved itinerary step for user ${user.uid}: ${stepId}`);
+    await setDoc(
+      stepRef,
+      {
+        ...step,
+        id: stepId,
+        createdAt: step.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
     return true;
   } catch (err) {
     console.error('❌ Error saving itinerary step:', err);

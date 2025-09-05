@@ -1,5 +1,4 @@
-// LoginScreen.js – SDK53 (Phone + Guest only, edge-to-edge bg)
-// FULL FILE PATCH
+// LoginScreen.js – edge-to-edge background with overlaid system bars (SDK 53)
 import React, { useEffect, useContext, useMemo, useState } from 'react';
 import {
   View,
@@ -7,10 +6,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ImageBackground,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as NavigationBar from 'expo-navigation-bar';
+import * as SystemUI from 'expo-system-ui';
 import { Ionicons } from '@expo/vector-icons';
 import * as Linking from 'expo-linking';
 
@@ -27,39 +28,44 @@ export default function LoginScreen({ navigation }) {
     [authLoading, screenBootLoading]
   );
 
-  // Make Android nav bar transparent & overlay the content
+  // Make the app root + system bars transparent & overlaid
   useEffect(() => {
-    (async () => {
-      try {
-        await NavigationBar.setBackgroundColorAsync('transparent');
+    // Transparent root (prevents grey behind bars on Android skins)
+    SystemUI.setBackgroundColorAsync('transparent').catch(() => {});
+
+    // Android navigation bar: fully transparent + overlay content
+    if (Platform.OS === 'android') {
+      (async () => {
         try {
-          await NavigationBar.setBehaviorAsync('overlay-swipe-edge-to-edge');
-        } catch {
-          await NavigationBar.setBehaviorAsync('overlay-swipe');
-        }
-        await NavigationBar.setButtonStyleAsync('light');
-      } catch {}
-    })();
+          // ARGB with alpha for true transparency across vendors
+          await NavigationBar.setBackgroundColorAsync('#00000000');
+          try {
+            await NavigationBar.setBehaviorAsync('overlay-swipe-edge-to-edge');
+          } catch {
+            await NavigationBar.setBehaviorAsync('overlay-swipe');
+          }
+          // Pick what reads best over your image (light/dark)
+          await NavigationBar.setButtonStyleAsync('light');
+          await NavigationBar.setVisibilityAsync('visible');
+        } catch {}
+      })();
+    }
   }, []);
 
-  // Gate the screen off the unified auth state from AuthContext
+  // Use AuthContext’s unified state to gate the screen
   useEffect(() => {
-    // Wait until AuthContext has finished its initial check
-    if (authLoading) return;
-
+    if (authLoading) return; // wait for initial check
     if (user) {
-      // Already signed in (native or web) — go straight to Home
       navigation.replace('HomeScreen');
     } else {
-      // Not signed in — show the login UI
       setScreenBootLoading(false);
     }
   }, [authLoading, user, navigation]);
 
-  // Ensure guest path is truly guest: clear ANY lingering auth before navigating
+  // Ensure guest path is truly guest
   const handleGuestAccess = async () => {
     try {
-      await logout(); // clears both web + native sessions
+      await logout(); // clears any lingering session
     } catch {}
     navigation.replace('HomeScreen');
   };
@@ -70,12 +76,14 @@ export default function LoginScreen({ navigation }) {
       style={styles.container}
       resizeMode="cover"
     >
-      <StatusBar style="light" translucent backgroundColor="transparent" />
+      {/* Top status bar: transparent & overlaid on the image */}
+      <StatusBar translucent backgroundColor="transparent" style="light" />
 
       <View
         style={[
           styles.overlay,
           {
+            // Only content gets safe-area padding; the image stays full-bleed
             paddingTop: insets.top + 16,
             paddingBottom: insets.bottom + 16,
           },

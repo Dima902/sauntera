@@ -5,10 +5,27 @@
 // 3) GPT+Google backend trigger, then reload and return
 
 import { getAuthInstance, db } from '../config/firebaseConfig';
-import { collection, query as fsQuery, where, doc, setDoc } from 'firebase/firestore';
+import {
+  collection,
+  query as fsQuery,
+  where,
+  doc,
+  setDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 import { fetchIdeasFromBackendAndReload, fetchIdeasFromFirestore } from './apiUtils';
 import { passesAllFilters, FILTER_TAG_MAP } from './filterMap';
 import { normalizeLocationString } from './locationNormalize';
+
+// Try to load native Firebase Auth (phone auth path). If not available (e.g., Expo Go),
+// we will fall back to web Firebase Auth from getAuthInstance().
+let rnfbAuth = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  rnfbAuth = require('@react-native-firebase/auth').default;
+} catch {
+  rnfbAuth = null;
+}
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Small, local utils (no React deps)
@@ -120,7 +137,8 @@ export const ensureIdeasFromNearbyOrWide = async function compatEnsureIdeasFromN
     }
 
     // ── 2) Firestore: primary + nearby (single batched call)
-    const canTryNearby = forceNearby || (Array.isArray(normalizedNearby) && normalizedNearby.length > 0);
+    const canTryNearby =
+      forceNearby || (Array.isArray(normalizedNearby) && normalizedNearby.length > 0);
     if (canTryNearby) {
       const withNearby = await fetchIdeasFromFirestore({
         city: normalizedCity || undefined,
@@ -142,17 +160,17 @@ export const ensureIdeasFromNearbyOrWide = async function compatEnsureIdeasFromN
     const after = await fetchIdeasFromBackendAndReload({
       city: normalizedCity || undefined,
       coords,
-      filters,                 // full user filters; apiUtils may narrow for backend
+      filters, // full user filters; apiUtils may narrow for backend
       userId: 'guest',
       expandRadius: expandRadius || true,
-      excludeCities: [],       // scope is the city; no excludes
+      excludeCities: [], // scope is the city; no excludes
       query: queryStr || '',
       radius: 0,
       silent: false,
       nearbyCities: normalizedNearby, // used during reload phase
       deckType,
       includeRestaurants,
-      minCount,                // ← ensure backend aims to satisfy minimum
+      minCount, // ← ensure backend aims to satisfy minimum
     });
 
     const finalPool = dedupeById(filterIdeas(after, filters)).filter(isValidIdea);
@@ -165,19 +183,34 @@ export const ensureIdeasFromNearbyOrWide = async function compatEnsureIdeasFromN
 };
 
 // ───────────────────────────────────────────────────────────────────────────────
-// Save idea for logged-in user
+// Unified current user helper (native-first, then web)
+const unifiedCurrentUser = async () => {
+  const nativeUser = rnfbAuth?.() ?.currentUser;
+  if (nativeUser) return nativeUser;
+  const webAuth = await getAuthInstance();
+  return webAuth?.currentUser || null;
+};
+
+// ───────────────────────────────────────────────────────────────────────────────
+// Save idea for logged-in user (unified auth + Firestore timestamps)
 
 export const saveIdeaForUser = async (idea) => {
-  const auth = await getAuthInstance();
-  const user = auth?.currentUser;
+  const user = await unifiedCurrentUser();
   if (!user) return;
 
   try {
-    const ideaRef = doc(db, `users/${user.uid}/savedIdeas`, String(normId(idea)));
-    await setDoc(ideaRef, {
-      ...idea,
-      savedAt: new Date(),
-    });
+    const ideaId = String(normId(idea));
+    const ideaRef = doc(db, `users/${user.uid}/savedIdeas`, ideaId);
+    await setDoc(
+      ideaRef,
+      {
+        ...idea,
+        id: ideaId,
+        createdAt: serverTimestamp(),
+        savedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
   } catch (err) {
     console.error('❌ Error saving idea:', err);
   }
@@ -210,7 +243,8 @@ export function buildCompoundFirestoreQuery(location, filters) {
       for (const t of tags) combinedTags.add(t);
     }
     if (priceLevel !== undefined) {
-      priceLevelCap = priceLevelCap === undefined ? priceLevel : Math.min(priceLevelCap, priceLevel);
+      priceLevelCap =
+        priceLevelCap === undefined ? priceLevel : Math.min(priceLevelCap, priceLevel);
     }
   }
 

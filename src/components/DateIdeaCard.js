@@ -1,3 +1,4 @@
+// src/components/DateIdeaCard.js
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
@@ -6,10 +7,9 @@ import {
   Animated,
   Alert,
   Share,
-  StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import slugify from 'slugify';
 import { getAuthInstance, db } from '../config/firebaseConfig';
 import { useTheme } from '../styles/theme';
@@ -22,6 +22,89 @@ import { useUserStatus } from '../hooks/useUserStatus';
 import Toast from 'react-native-toast-message';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// ───────────────────────────────────────────────────────────────────────────────
+// Native Firebase (RNFirebase) modules — used when phone auth is active
+let rnfbAuth = null;
+let rnfbFirestore = null;
+try {
+  rnfbAuth = require('@react-native-firebase/auth').default;
+  rnfbFirestore = require('@react-native-firebase/firestore').default;
+} catch {
+  rnfbAuth = null;
+  rnfbFirestore = null;
+}
+
+// Unified current user (prefer native phone-auth, fallback to web)
+const getUnifiedCurrentUser = (webAuthRef, hookUser) => {
+  if (hookUser?.uid) return hookUser;
+  const nativeUser = rnfbAuth?.()?.currentUser;
+  if (nativeUser) return nativeUser;
+  return webAuthRef?.current?.currentUser || null;
+};
+
+// Native-first writer
+async function writeSavedIdeaNativeFirst({ uid, ideaId, idea, webDb }) {
+  if (rnfbAuth?.() && rnfbAuth().currentUser && rnfbFirestore) {
+    await rnfbFirestore()
+      .collection('users')
+      .doc(uid)
+      .collection('savedIdeas')
+      .doc(ideaId)
+      .set(
+        {
+          ...idea,
+          id: ideaId,
+          createdAt: rnfbFirestore.FieldValue.serverTimestamp(),
+          savedAt: rnfbFirestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    return;
+  }
+  // Web fallback
+  const ideaRef = doc(webDb, `users/${uid}/savedIdeas`, ideaId);
+  await setDoc(
+    ideaRef,
+    {
+      ...idea,
+      id: ideaId,
+      createdAt: serverTimestamp(),
+      savedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+// Native-first existence check
+async function isIdeaSavedNativeFirst({ uid, ideaId, webDb }) {
+  if (rnfbAuth?.() && rnfbAuth().currentUser && rnfbFirestore) {
+    const snap = await rnfbFirestore()
+      .collection('users')
+      .doc(uid)
+      .collection('savedIdeas')
+      .doc(ideaId)
+      .get();
+    return !!snap.exists;
+  }
+  const ideaRef = doc(webDb, `users/${uid}/savedIdeas`, ideaId);
+  const snap = await getDoc(ideaRef);
+  return snap.exists();
+}
+
+// Native-first delete
+async function deleteSavedIdeaNativeFirst({ uid, ideaId, webDb }) {
+  if (rnfbAuth?.() && rnfbAuth().currentUser && rnfbFirestore) {
+    await rnfbFirestore()
+      .collection('users')
+      .doc(uid)
+      .collection('savedIdeas')
+      .doc(ideaId)
+      .delete();
+    return;
+  }
+  await deleteDoc(doc(webDb, `users/${uid}/savedIdeas`, ideaId));
+}
+
 const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
   const theme = useTheme();
   const styles = useMemo(() => createHomeScreenStyles(theme), [theme?.mode]);
@@ -31,85 +114,111 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
   const [revealAnim] = useState(new Animated.Value(0));
 
   const [isSaved, setIsSaved] = useState(false);
-  const [user, setUser] = useState(null);
   const [wasJustUnlocked, setWasJustUnlocked] = useState(false);
 
   const authRef = useRef(null);
   const bottomSheetRef = useRef(null);
-  const ideaId = idea.id || slugify(idea.title || 'untitled', { lower: true, strict: true });
+  const ideaId =
+    idea.id ||
+    slugify(idea.title || 'untitled', { lower: true, strict: true });
   const imageUri = idea.image || 'https://via.placeholder.com/400x300';
 
   const { hasUnlocked, unlockGem } = useGemTracker();
   const gemUnlocked = hasUnlocked(ideaId);
-  const locationBadge = idea.generatedFromNearbyCity ? idea.location?.split(',')[0]?.trim() : null;
+  const locationBadge = idea.generatedFromNearbyCity
+    ? idea.location?.split(',')[0]?.trim()
+    : null;
 
-  // Determine user status. useUserStatus exposes whether the user is a
-  // guest, free user, or premium. We use this to control gem unlocking
-  // limits and actions. Note that isFreeUser means logged-in but not
-  // premium; isPremium implies both isGuest and isFreeUser are false.
-  const { isGuest: userIsGuest, isFreeUser: userIsFree, isPremium: userIsPremium } = useUserStatus();
+  // ✅ Mirror ProfileScreen: use unified auth/tier from the hook
+  const {
+    user: hookUser,
+    isGuest: userIsGuest,
+    isFreeUser: userIsFree,
+    isPremium: userIsPremium,
+  } = useUserStatus(); // single source of truth for auth status  :contentReference[oaicite:3]{index=3}
 
-  // Fallback to current auth user when hook has not yet resolved. The
-  // previous logic used local user state to derive guest status. We'll
-  // maintain the original behaviour when hook values are undefined.
-  const isGuest = userIsGuest !== undefined ? userIsGuest : !user;
+  const isGuest = !!userIsGuest;
 
+  // Init auth + pre-check saved
   useEffect(() => {
-    let unsubscribe;
+    let unsubNav;
     (async () => {
-      const auth = await getAuthInstance();
+      const auth = await getAuthInstance(); // web auth instance
       authRef.current = auth;
-      setUser(auth.currentUser);
-      checkIfSaved(auth);
-      unsubscribe = navigation.addListener('focus', () => checkIfSaved(auth));
+
+      await checkIfSaved();
+      unsubNav = navigation.addListener('focus', checkIfSaved);
     })();
-    return () => unsubscribe && unsubscribe();
+    return () => unsubNav && unsubNav();
   }, [navigation]);
 
-  const checkIfSaved = useCallback(async (auth) => {
-    const user = auth?.currentUser;
-    if (!user) return;
-    try {
-      const ideaRef = doc(db, `users/${user.uid}/savedIdeas`, ideaId);
-      const docSnap = await getDoc(ideaRef);
-      setIsSaved(docSnap.exists());
-    } catch (error) {
-      console.error("❌ Error checking saved status:", error);
-    }
-  }, [ideaId]);
-
-  const handleSaveIdea = useCallback(async () => {
-    const user = authRef.current?.currentUser;
-    if (!user) {
-      Alert.alert("Login Required", "You need to log in to save ideas.");
+  const checkIfSaved = useCallback(async () => {
+    const u = getUnifiedCurrentUser(authRef, hookUser);
+    if (!u) {
+      setIsSaved(false);
       return;
     }
     try {
-      const ideaRef = doc(db, `users/${user.uid}/savedIdeas`, ideaId);
-      await setDoc(ideaRef, idea, { merge: true });
-      setIsSaved(true);
+      const exists = await isIdeaSavedNativeFirst({
+        uid: u.uid,
+        ideaId,
+        webDb: db,
+      });
+      setIsSaved(!!exists);
+    } catch (error) {
+      console.error('❌ Error checking saved status:', error);
+    }
+  }, [ideaId, hookUser]);
+
+  const handleSaveIdea = useCallback(async () => {
+    const u = getUnifiedCurrentUser(authRef, hookUser);
+    if (!u) {
+      Alert.alert('Login Required', 'You need to log in to save ideas.');
+      return;
+    }
+
+    // Optimistic UI
+    setIsSaved(true);
+
+    try {
+      await writeSavedIdeaNativeFirst({
+        uid: u.uid,
+        ideaId,
+        idea,
+        webDb: db,
+      });
       Toast.show({ type: 'success', text1: 'Saved to Favorites' });
     } catch (error) {
-      console.error("❌ Error saving idea:", error);
+      console.error('❌ Error saving idea:', error);
+      setIsSaved(false); // revert on failure
+      Toast.show({ type: 'error', text1: 'Could not save. Try again.' });
     }
-  }, [idea, ideaId]);
+  }, [idea, ideaId, hookUser]);
 
-  const deleteSavedIdea = useCallback(async () => {
-    const user = authRef.current?.currentUser;
-    if (!user) return;
+  const handleDeleteSaved = useCallback(async () => {
+    const u = getUnifiedCurrentUser(authRef, hookUser);
+    if (!u) return;
+
+    // Optimistic UI
+    setIsSaved(false);
+
     try {
-      const ideaRef = doc(db, `users/${user.uid}/savedIdeas`, ideaId);
-      await deleteDoc(ideaRef);
-      setIsSaved(false);
+      await deleteSavedIdeaNativeFirst({
+        uid: u.uid,
+        ideaId,
+        webDb: db,
+      });
       Toast.show({ type: 'info', text1: 'Removed from Saved' });
     } catch (error) {
-      console.error("❌ Error deleting saved idea:", error);
+      console.error('❌ Error deleting saved idea:', error);
+      setIsSaved(true); // revert on failure
+      Toast.show({ type: 'error', text1: 'Could not remove. Try again.' });
     }
-  }, [ideaId]);
+  }, [ideaId, hookUser]);
 
   const toggleSaveIdea = useCallback(() => {
-    isSaved ? deleteSavedIdea() : handleSaveIdea();
-  }, [isSaved, handleSaveIdea, deleteSavedIdea]);
+    isSaved ? handleDeleteSaved() : handleSaveIdea();
+  }, [isSaved, handleDeleteSaved, handleSaveIdea]);
 
   const shareIdea = useCallback(async () => {
     try {
@@ -117,7 +226,7 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
         message: `Check out this date idea: ${idea.title}\n${idea.description}\nFound on Sauntera!`,
       });
     } catch (error) {
-      console.error("❌ Error sharing idea:", error);
+      console.error('❌ Error sharing idea:', error);
     }
   }, [idea]);
 
@@ -134,7 +243,6 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
     if (isHiddenGem && !alreadyUnlocked) {
       triggerPulse();
 
-      // Guests cannot unlock gems; redirect them to login.
       if (isGuest) {
         navigation.navigate('LoginScreen');
         return;
@@ -143,9 +251,6 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
       try {
         const raw = await AsyncStorage.getItem('persistedGemIds');
         const unlockedIds = raw ? JSON.parse(raw) : [];
-
-        // Determine the maximum number of gems a user can unlock per day.
-        // Premium users may unlock two gems, free users one, guests zero.
         const gemLimit = userIsPremium ? 2 : (userIsFree ? 1 : 0);
         const hasReachedLimit = unlockedIds.length >= gemLimit;
 
@@ -167,14 +272,10 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
           });
           return;
         }
-        // If the user has reached their daily limit: free users are
-        // encouraged to upgrade; premium users silently ignore; guests
-        // should never hit this branch (handled above).
         if (userIsFree) {
           navigation.navigate('SubscriptionScreen');
           return;
         } else {
-          // For premium users who somehow exceed their limit, just return.
           return;
         }
       } catch (err) {
@@ -183,16 +284,12 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
     }
 
     navigation.navigate('DateIdeaDetails', { idea });
-  }, [idea, isHiddenGem, gemUnlocked, wasJustUnlocked, ideaId, unlockGem, navigation, isGuest]);
+  }, [idea, isHiddenGem, gemUnlocked, wasJustUnlocked, ideaId, unlockGem, navigation, isGuest, userIsPremium, userIsFree]);
 
   let ctaText = '';
-  if (isGuest) {
-    ctaText = 'Login to See More';
-  } else if (gemUnlocked || wasJustUnlocked) {
-    ctaText = '';
-  } else {
-    ctaText = 'Tap to Unlock';
-  }
+  if (isGuest) ctaText = 'Login to See More';
+  else if (gemUnlocked || wasJustUnlocked) ctaText = '';
+  else ctaText = 'Tap to Unlock';
 
   return (
     <TouchableOpacity
@@ -217,27 +314,36 @@ const DateIdeaCard = ({ idea, navigation, isHiddenGem = false }) => {
           </View>
         )}
 
-        <Animated.View style={[styles.cardContent, wasJustUnlocked && {
-          transform: [{
-            scale: revealAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.95, 1],
-            })
-          }],
-        }]}>
+        <Animated.View
+          style={[
+            styles.cardContent,
+            wasJustUnlocked && {
+              transform: [
+                {
+                  scale: revealAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.95, 1],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           {(!isHiddenGem || gemUnlocked || wasJustUnlocked) && (
             <>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardTitle}>{idea.title || 'No Title'}</Text>
                 <TouchableOpacity onPress={toggleSaveIdea} style={styles.saveButton}>
                   <Ionicons
-                    name={isSaved ? "bookmark" : "bookmark-outline"}
+                    name={isSaved ? 'bookmark' : 'bookmark-outline'}
                     size={24}
                     color={theme.iconActive}
                   />
                 </TouchableOpacity>
               </View>
-              <Text style={styles.cardDescription}>{idea.description || 'No description available.'}</Text>
+              <Text style={styles.cardDescription}>
+                {idea.description || 'No description available.'}
+              </Text>
               <Text style={styles.cardPrice}>Price: {idea.price || 'Unknown'}</Text>
             </>
           )}

@@ -1,11 +1,15 @@
-// SettingsScreen.js - Fully updated for dynamic Firebase auth
+// src/screens/SettingsScreen.js – Patched to use AuthContext.logout()
+
 import React, { useState, useEffect, useContext, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, Alert, Switch, ScrollView
+  View,
+  Text,
+  TouchableOpacity,
+  Alert,
+  Switch,
+  ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { deleteUser, signOut } from 'firebase/auth';
-import { getAuthInstance } from '../config/firebaseConfig';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -18,26 +22,22 @@ import { useTheme } from '../styles/theme';
 import { createSettingsScreenStyles } from '../styles/SettingsScreenStyles';
 import * as Linking from 'expo-linking';
 
+// ✅ import AuthContext to use unified logout
+import { AuthContext } from '../context/AuthContext';
+
 export default function SettingsScreen() {
   const navigation = useNavigation();
   const theme = useTheme();
   const styles = useMemo(() => createSettingsScreenStyles(theme), [theme]);
   const { theme: themeState, toggleTheme } = useContext(ThemeContext);
 
-  const [authRef, setAuthRef] = useState(null);
+  const { logout } = useContext(AuthContext); // ✅ use unified logout
+
   const [tipsEnabled, setTipsEnabled] = useState(false);
   const [eventsEnabled, setEventsEnabled] = useState(false);
   const [billingEmail, setBillingEmail] = useState('');
 
   useEffect(() => {
-    (async () => {
-      const auth = await getAuthInstance();
-      setAuthRef(auth);
-      if (auth?.currentUser?.email) {
-        setBillingEmail(auth.currentUser.email);
-      }
-    })();
-
     const loadPrefs = async () => {
       const tips = await getNotificationPreference('tipsEnabled');
       const events = await getNotificationPreference('eventsEnabled');
@@ -60,36 +60,12 @@ export default function SettingsScreen() {
   };
 
   const handleLogout = async () => {
-    if (!authRef) return;
     try {
-      await signOut(authRef);
+      await logout(); // ✅ signs out both web and native sessions
       navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
     } catch (e) {
-      Alert.alert('Logout Error', e.message);
+      Alert.alert('Logout Error', e?.message || String(e));
     }
-  };
-
-  const handleDeleteAccount = async () => {
-    if (!authRef?.currentUser) return;
-    Alert.alert(
-      'Delete Account',
-      'Are you sure? This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteUser(authRef.currentUser);
-              navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
-            } catch (err) {
-              Alert.alert('Error', err.message);
-            }
-          },
-        },
-      ]
-    );
   };
 
   const version = Constants?.manifest?.version || '1.0.0';
@@ -98,7 +74,10 @@ export default function SettingsScreen() {
     <View style={{ flex: 1 }}>
       {/* Sticky Header */}
       <View style={[styles.headerRow, styles.stickyHeader]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
           <Ionicons name="arrow-back" size={24} color={theme.text} />
         </TouchableOpacity>
         <Text style={styles.profileTitle}>Settings</Text>
@@ -107,102 +86,138 @@ export default function SettingsScreen() {
 
       {/* Scrollable Content */}
       <ScrollView
-        style={[styles.container, { marginTop: 60 }]} // adjust height to match sticky header
+        style={[styles.container, { marginTop: 60 }]}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
-
-      {/* Notifications */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Notifications</Text>
-        <View style={styles.settingRow}>
-          <View style={styles.settingLabelRow}>
-            <Ionicons name="bulb-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-            <View>
-              <Text style={styles.settingLabel}>Date Night Tips</Text>
-              <Text style={styles.settingDescription}>Occasional tips and inspiration</Text>
+        {/* Notifications */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Notifications</Text>
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons
+                name="bulb-outline"
+                size={20}
+                color={theme.text}
+                style={{ marginRight: 8 }}
+              />
+              <View>
+                <Text style={styles.settingLabel}>Date Night Tips</Text>
+                <Text style={styles.settingDescription}>
+                  Occasional tips and inspiration
+                </Text>
+              </View>
             </View>
+            <Switch value={tipsEnabled} onValueChange={handleToggleTips} />
           </View>
-          <Switch value={tipsEnabled} onValueChange={handleToggleTips} />
-        </View>
-        <View style={styles.settingRow}>
-          <View style={styles.settingLabelRow}>
-            <Ionicons name="calendar-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-            <View>
-              <Text style={styles.settingLabel}>Event Alerts</Text>
-              <Text style={styles.settingDescription}>Get notified about local events</Text>
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons
+                name="calendar-outline"
+                size={20}
+                color={theme.text}
+                style={{ marginRight: 8 }}
+              />
+              <View>
+                <Text style={styles.settingLabel}>Event Alerts</Text>
+                <Text style={styles.settingDescription}>
+                  Get notified about local events
+                </Text>
+              </View>
             </View>
+            <Switch value={eventsEnabled} onValueChange={handleToggleEvents} />
           </View>
-          <Switch value={eventsEnabled} onValueChange={handleToggleEvents} />
         </View>
-      </View>
 
-      {/* Appearance */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Appearance</Text>
-        <View style={styles.settingRow}>
-          <View style={styles.settingLabelRow}>
-            <Ionicons name="moon-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-            <Text style={styles.settingLabel}>Dark Mode</Text>
+        {/* Appearance */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Appearance</Text>
+          <View style={styles.settingRow}>
+            <View style={styles.settingLabelRow}>
+              <Ionicons
+                name="moon-outline"
+                size={20}
+                color={theme.text}
+                style={{ marginRight: 8 }}
+              />
+              <Text style={styles.settingLabel}>Dark Mode</Text>
+            </View>
+            <Switch
+              value={themeState.mode === 'dark'}
+              onValueChange={toggleTheme}
+            />
           </View>
-          <Switch value={themeState.mode === 'dark'} onValueChange={toggleTheme} />
         </View>
-      </View>
 
-      {/* Account */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <View style={styles.settingRow}>
-          <Ionicons name="mail-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.settingLabel}>{billingEmail || 'Not signed in'}</Text>
+        {/* Account */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <View style={styles.settingRow}>
+            <Ionicons
+              name="mail-outline"
+              size={20}
+              color={theme.text}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.settingLabel}>
+              {billingEmail || 'Not signed in'}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Ionicons
+              name="log-out-outline"
+              size={20}
+              color={theme.text}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.logoutButtonText}>Log Out</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.logoutButtonText}>Log Out</Text>
-        </TouchableOpacity>
-      </View>
 
-      {/* Help & Legal section */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Help & Legal</Text>
+        {/* Help & Legal */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Help & Legal</Text>
 
-        <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => Linking.openURL('https://sauntera.com/privacy.html')}
-        >
-          <Ionicons name="shield-checkmark-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.settingLabel}>Privacy Policy</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => Linking.openURL('https://sauntera.com/privacy.html')}
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={20}
+              color={theme.text}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.settingLabel}>Privacy Policy</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.settingRow}
-          onPress={() => Linking.openURL('https://sauntera.com/terms.html')}
-        >
-          <Ionicons name="document-text-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.settingLabel}>Terms of Use</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('LegalScreen', { type: 'copyright' })}>
-          <Ionicons name="clipboard-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.settingLabel}>Copyright Notice</Text>
-        </TouchableOpacity>
-      </View>
-
-
-      {/* App Info */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>App Info</Text>
-        <View style={styles.settingRow}>
-          <Ionicons name="information-circle-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-          <Text style={styles.settingLabel}>Version {version}</Text>
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={() => Linking.openURL('https://sauntera.com/terms.html')}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={20}
+              color={theme.text}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.settingLabel}>Terms of Use</Text>
+          </TouchableOpacity>
         </View>
-      </View>
 
-      {/* Delete Account */}
-      <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
-        <Ionicons name="trash-outline" size={20} color={theme.text} style={{ marginRight: 8 }} />
-        <Text style={styles.deleteButtonText}>Delete Account</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* App Info */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>App Info</Text>
+          <View style={styles.settingRow}>
+            <Ionicons
+              name="information-circle-outline"
+              size={20}
+              color={theme.text}
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.settingLabel}>Version {version}</Text>
+          </View>
+        </View>
+      </ScrollView>
     </View>
   );
 }

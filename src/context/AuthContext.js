@@ -15,33 +15,37 @@ import {
   EmailAuthProvider,
   reload,
   updateProfile,
+  getAuth as getWebAuth
 } from 'firebase/auth';
 import { getAuthInstance, db } from '../config/firebaseConfig';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import * as Facebook from 'expo-auth-session/providers/facebook';
 import { makeRedirectUri, exchangeCodeAsync } from 'expo-auth-session';
+// Web Firestore helpers (used only when db is Web Firestore)
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import Constants from 'expo-constants';
+
+WebBrowser.maybeCompleteAuthSession();
 
 // Try to load native Firebase Auth (@react-native-firebase/auth)
 let rnfbAuth = null;
 try {
-  rnfbAuth = require('@react-native-firebase/auth').default;
+  rnfbAuth = require('@react-native-firebase/auth').default; // function -> auth()
 } catch {
   rnfbAuth = null;
 }
 
-WebBrowser.maybeCompleteAuthSession();
-
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);        // <-- single source of truth
+  const [user, setUser] = useState(null);        // single source of truth
   const [authLoading, setAuthLoading] = useState(true);
-  const [webAuth, setWebAuth] = useState(null);  // keep a ref for Google/Email flows
+  const [webAuth, setWebAuth] = useState(null);  // used for Google/Email/Facebook web flows
 
   const isExpoGo = Constants.appOwnership === 'expo';
+  const hasNativeAuth = !!rnfbAuth;
+  const canUseWebAuth = !hasNativeAuth; // only use web flows on Expo Go / Web
 
   // ---------- GOOGLE ----------
   const expoClientId =
@@ -59,115 +63,121 @@ export const AuthProvider = ({ children }) => {
   );
 
   const [googleRequest, googleResponse, googlePromptAsync] = Google.useAuthRequest(
-    {
-      expoClientId,
-      androidClientId,
-      iosClientId,
-      webClientId,
-      scopes: ['openid', 'profile', 'email'],
-      responseType: isExpoGo ? 'id_token' : 'code',
-      redirectUri: googleRedirectUri,
-      selectAccount: true,
-      usePKCE: !isExpoGo,
-    },
+    canUseWebAuth
+      ? {
+          expoClientId,
+          androidClientId,
+          iosClientId,
+          webClientId,
+          scopes: ['openid', 'profile', 'email'],
+          responseType: isExpoGo ? 'id_token' : 'code',
+          redirectUri: googleRedirectUri,
+          selectAccount: true,
+          usePKCE: !isExpoGo
+        }
+      : null,
     { useProxy: isExpoGo }
   );
 
   // ---------- FACEBOOK ----------
   const [fbRequest, fbResponse, fbPromptAsync] = Facebook.useAuthRequest(
-    {
-      clientId: '524476964015639',
-      scopes: ['public_profile', 'email'],
-      responseType: 'token',
-      redirectUri: makeRedirectUri({ useProxy: true }),
-    },
+    canUseWebAuth
+      ? {
+          clientId: '524476964015639',
+          scopes: ['public_profile', 'email'],
+          responseType: 'token',
+          redirectUri: makeRedirectUri({ useProxy: true })
+        }
+      : null,
     { useProxy: true }
   );
 
   // ----- ActionCodeSettings -----
   const actionCodeSettings = {
     url: 'https://sauntera.com/verified',
-    handleCodeInApp: false,
+    handleCodeInApp: false
   };
 
   // ---- helper: upsert Firestore profile for any FirebaseUser (web or native) ----
-  const upsertUserDoc = useCallback(async (firebaseUser) => {
-    if (!firebaseUser) return;
-    try {
-      const userRef = doc(db, 'users', firebaseUser.uid);
-      const snap = await getDoc(userRef);
-      if (!snap.exists()) {
-        await setDoc(userRef, {
-          name: firebaseUser.displayName || '',
-          email: firebaseUser.email || '',
-          phone: firebaseUser.phoneNumber || '',
-          photoURL: firebaseUser.photoURL || '',
-          accountType: 'free',
-          createdAt: new Date().toISOString(),
-          providerIds: firebaseUser.providerData?.map((p) => p.providerId) || [],
-        });
-      }
-    } catch (e) {
-      console.error('Failed to upsert Firestore user:', e);
-    }
-  }, []);
+  const upsertUserDoc = useCallback(
+    async (firebaseUser) => {
+      if (!firebaseUser || !db) return;
 
-  // ----- INIT AUTH: subscribe to both and prefer native when present -----
-  useEffect(() => {
-    let unsubWeb, unsubNative, mounted = true;
+      // Detect which Firestore SDK we are on: RNFirebase vs Web modular
+      const isRNFirestore = typeof db?.collection === 'function';
 
-    (async () => {
-      const auth = await getAuthInstance();       // web auth (uses AsyncStorage persistence)
-      if (!mounted) return;
-      setWebAuth(auth);
+      const payload = {
+        name: firebaseUser.displayName || '',
+        email: firebaseUser.email || '',
+        phone: firebaseUser.phoneNumber || '',
+        photoURL: firebaseUser.photoURL || '',
+        accountType: 'free',
+        createdAt: new Date().toISOString(),
+        providerIds: firebaseUser.providerData?.map((p) => p.providerId) || []
+      };
 
-      // web listener (for Google/Email flows)
-      unsubWeb = onWebAuthStateChanged(auth, async (webUser) => {
-        // If native is not signed in, use the web user
-        if (rnfbAuth) {
-          const nativeCurr = rnfbAuth().currentUser;
-          if (nativeCurr) {
-            // native takes precedence, ignore web in this case
-            setUser(nativeCurr);
-            upsertUserDoc(nativeCurr);
-            setAuthLoading(false);
-            return;
+      try {
+        if (isRNFirestore) {
+          // RNFirebase Firestore
+          const userRef = db.collection('users').doc(firebaseUser.uid);
+          const snap = await userRef.get();
+          if (!snap.exists) {
+            await userRef.set(payload);
+          }
+        } else {
+          // Web Firestore modular
+          const userRef = doc(db, 'users', firebaseUser.uid);
+          const snap = await getDoc(userRef);
+          if (!snap.exists()) {
+            await setDoc(userRef, payload);
           }
         }
-        // Else fall back to web
-        setUser(webUser || null);
-        if (webUser) upsertUserDoc(webUser);
-        setAuthLoading(false);
-      });
+      } catch (e) {
+        console.error('Failed to upsert Firestore user:', e);
+      }
+    },
+    [db]
+  );
 
-      // native listener (for Phone auth in dev/prod builds)
-      if (rnfbAuth) {
-        unsubNative = rnfbAuth().onAuthStateChanged(async (nativeUser) => {
-          if (nativeUser) {
-            setUser(nativeUser);
-            upsertUserDoc(nativeUser);
-          } else {
-            // Only clear to null if web is also null; otherwise web user stays
-            if (!auth.currentUser) setUser(null);
-          }
+  // ----- INIT AUTH: prefer native; fallback to web -----
+  useEffect(() => {
+    let unsub = () => {};
+    let mounted = true;
+
+    (async () => {
+      const auth = await getAuthInstance(); // native auth() or web auth()
+      if (!mounted) return;
+
+      if (hasNativeAuth) {
+        // ✅ Native listener only (avoids web/native race conditions)
+        unsub = rnfbAuth().onAuthStateChanged(async (nativeUser) => {
+          setUser(nativeUser || null);
+          if (nativeUser) await upsertUserDoc(nativeUser);
           setAuthLoading(false);
         });
       } else {
-        // No native module available (e.g., Expo Go) – rely on web only
-        setAuthLoading(false);
+        // 🌐 Web listener only (Expo Go / Web)
+        setWebAuth(auth);
+        unsub = onWebAuthStateChanged(auth, async (webUser) => {
+          setUser(webUser || null);
+          if (webUser) await upsertUserDoc(webUser);
+          setAuthLoading(false);
+        });
       }
     })();
 
     return () => {
       mounted = false;
-      unsubWeb && unsubWeb();
-      unsubNative && unsubNative();
+      try {
+        unsub && unsub();
+      } catch {}
     };
-  }, [upsertUserDoc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasNativeAuth, upsertUserDoc]);
 
-  // ----- GOOGLE → FIREBASE (web) -----
+  // ----- GOOGLE → FIREBASE (web only) -----
   useEffect(() => {
-    if (!webAuth) return;
+    if (!canUseWebAuth || !webAuth) return;
     (async () => {
       if (googleResponse?.type !== 'success') return;
       try {
@@ -181,7 +191,7 @@ export const AuthProvider = ({ children }) => {
               code: googleResponse.params.code,
               clientId: isExpoGo ? expoClientId : androidClientId,
               redirectUri: googleRedirectUri,
-              extraParams: { code_verifier: googleRequest?.codeVerifier || '' },
+              extraParams: { code_verifier: googleRequest?.codeVerifier || '' }
             },
             { tokenEndpoint: 'https://oauth2.googleapis.com/token' }
           );
@@ -199,11 +209,21 @@ export const AuthProvider = ({ children }) => {
         console.error('Google sign-in error:', err);
       }
     })();
-  }, [googleResponse, webAuth, isExpoGo, googleAndroidNativeRedirect, googleRedirectUri, googleRequest, androidClientId, expoClientId]);
+  }, [
+    canUseWebAuth,
+    webAuth,
+    googleResponse,
+    isExpoGo,
+    googleAndroidNativeRedirect,
+    googleRedirectUri,
+    googleRequest,
+    androidClientId,
+    expoClientId
+  ]);
 
-  // ----- FACEBOOK → FIREBASE (web) -----
+  // ----- FACEBOOK → FIREBASE (web only) -----
   useEffect(() => {
-    if (!webAuth) return;
+    if (!canUseWebAuth || !webAuth) return;
     if (fbResponse?.type === 'success') {
       const accessToken =
         fbResponse.authentication?.accessToken || fbResponse.params?.access_token;
@@ -216,24 +236,25 @@ export const AuthProvider = ({ children }) => {
         console.error('Facebook sign-in error:', err)
       );
     }
-  }, [fbResponse, webAuth]);
+  }, [canUseWebAuth, fbResponse, webAuth]);
 
   // ----- PUBLIC API -----
   const signInWithGoogle = useCallback(() => {
-    if (!googleRequest) return;
+    if (!canUseWebAuth || !googleRequest) return;
     googlePromptAsync({ useProxy: isExpoGo });
-  }, [googleRequest, googlePromptAsync, isExpoGo]);
+  }, [canUseWebAuth, googleRequest, googlePromptAsync, isExpoGo]);
 
   const signInWithFacebook = useCallback(() => {
-    if (!fbRequest) return;
+    if (!canUseWebAuth || !fbRequest) return;
     fbPromptAsync({ useProxy: true, preferEphemeralSession: true });
-  }, [fbRequest, fbPromptAsync]);
+  }, [canUseWebAuth, fbRequest, fbPromptAsync]);
 
-  // ----- EMAIL/PASSWORD (web) -----
+  // ----- EMAIL/PASSWORD (web only) -----
   const signUpWithEmail = useCallback(
     async ({ email, password, displayName }) => {
-      if (!webAuth) throw new Error('Auth not ready');
-      const cred = await createUserWithEmailAndPassword(webAuth, email.trim(), password);
+      if (!canUseWebAuth) throw new Error('Email auth is not enabled on native builds.');
+      const auth = webAuth || getWebAuth();
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       if (displayName) {
         try {
           await updateProfile(cred.user, { displayName });
@@ -248,59 +269,69 @@ export const AuthProvider = ({ children }) => {
       }
       return cred.user;
     },
-    [webAuth]
+    [canUseWebAuth, webAuth]
   );
 
   const signInWithEmail = useCallback(
     async (email, password) => {
-      if (!webAuth) throw new Error('Auth not ready');
-      const cred = await signInWithEmailAndPassword(webAuth, email.trim(), password);
+      if (!canUseWebAuth) throw new Error('Email auth is not enabled on native builds.');
+      const auth = webAuth || getWebAuth();
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
       return cred.user;
     },
-    [webAuth]
+    [canUseWebAuth, webAuth]
   );
 
   const resendEmailVerification = useCallback(async () => {
-    if (!webAuth || !webAuth.currentUser) throw new Error('Not signed in');
-    await sendEmailVerification(webAuth.currentUser, actionCodeSettings);
-  }, [webAuth]);
+    if (!canUseWebAuth) throw new Error('Email verification is not enabled on native builds.');
+    const auth = webAuth || getWebAuth();
+    if (!auth.currentUser) throw new Error('Not signed in');
+    await sendEmailVerification(auth.currentUser, actionCodeSettings);
+  }, [canUseWebAuth, webAuth]);
 
   const checkEmailVerified = useCallback(async () => {
-    if (!webAuth || !webAuth.currentUser) return false;
-    await reload(webAuth.currentUser);
-    return !!webAuth.currentUser.emailVerified;
-  }, [webAuth]);
+    if (!canUseWebAuth) return false;
+    const auth = webAuth || getWebAuth();
+    if (!auth.currentUser) return false;
+    await reload(auth.currentUser);
+    return !!auth.currentUser.emailVerified;
+  }, [canUseWebAuth, webAuth]);
 
   const sendPasswordReset = useCallback(
     async (email) => {
-      if (!webAuth) throw new Error('Auth not ready');
-      await sendPasswordResetEmail(webAuth, email.trim(), actionCodeSettings);
+      if (!canUseWebAuth) throw new Error('Password reset is not enabled on native builds.');
+      const auth = webAuth || getWebAuth();
+      await sendPasswordResetEmail(auth, email.trim(), actionCodeSettings);
     },
-    [webAuth]
+    [canUseWebAuth, webAuth]
   );
 
   const getProvidersForEmail = useCallback(
     async (email) => {
-      if (!webAuth) throw new Error('Auth not ready');
-      return fetchSignInMethodsForEmail(webAuth, email.trim());
+      if (!canUseWebAuth) throw new Error('Provider lookup is not enabled on native builds.');
+      const auth = webAuth || getWebAuth();
+      return fetchSignInMethodsForEmail(auth, email.trim());
     },
-    [webAuth]
+    [canUseWebAuth, webAuth]
   );
 
   const linkEmailToCurrent = useCallback(
     async (email, password) => {
-      if (!webAuth || !webAuth.currentUser) throw new Error('Not signed in');
+      if (!canUseWebAuth) throw new Error('Email linking is not enabled on native builds.');
+      const auth = webAuth || getWebAuth();
+      if (!auth.currentUser) throw new Error('Not signed in');
       const credential = EmailAuthProvider.credential(email.trim(), password);
-      const result = await linkWithCredential(webAuth.currentUser, credential);
+      const result = await linkWithCredential(auth.currentUser, credential);
       return result.user;
     },
-    [webAuth]
+    [canUseWebAuth, webAuth]
   );
 
   // ----- PHONE AUTH (native-first; unavailable in Expo Go) -----
   const signInWithPhone = useCallback(async (phoneNumber) => {
     if (rnfbAuth) {
-      return rnfbAuth().signInWithPhoneNumber(phoneNumber); // returns a confirmation object
+      // Returns a confirmation object (native)
+      return rnfbAuth().signInWithPhoneNumber(phoneNumber);
     }
     const err = new Error(
       'Phone auth requires a development or production build that includes @react-native-firebase/auth. It is not available in Expo Go.'
@@ -312,7 +343,8 @@ export const AuthProvider = ({ children }) => {
   const confirmPhoneCode = useCallback(async (confirmation, code) => {
     if (!confirmation) throw new Error('No confirmation object');
     if (confirmation && typeof confirmation.confirm === 'function') {
-      return confirmation.confirm(code); // signs in native; our unified listener will pick it up
+      // Signs in natively; the native listener updates context
+      return confirmation.confirm(code);
     }
     throw new Error('Invalid confirmation object for phone auth.');
   }, []);
@@ -337,6 +369,7 @@ export const AuthProvider = ({ children }) => {
       value={{
         user,
         authLoading,
+        // Web-only sign-in methods will no-op on native builds
         signInWithGoogle,
         signInWithFacebook,
         signUpWithEmail,
@@ -346,9 +379,10 @@ export const AuthProvider = ({ children }) => {
         sendPasswordReset,
         getProvidersForEmail,
         linkEmailToCurrent,
+        // Native phone auth
         logout,
         signInWithPhone,
-        confirmPhoneCode,
+        confirmPhoneCode
       }}
     >
       {children}

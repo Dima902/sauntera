@@ -1,34 +1,37 @@
-// src/screens/HistoryScreen.js
-import React, { useEffect, useState, useMemo, useContext, useCallback } from 'react';
+// HistoryScreen.js – Empty state UI added + refactored auth logic
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, Alert, ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { db } from '../config/firebaseConfig';
+import { getAuthInstance, db } from '../config/firebaseConfig';
 import { collection, getDocs, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import BottomNav from '../components/BottomNav';
 import GuestPrompt from '../components/GuestPrompt';
 import { useTheme } from '../styles/theme';
 import { createHistoryScreenStyles } from '../styles/HistoryScreenStyles';
-import { useUserStatus } from '../hooks/useUserStatus';
-import { AuthContext } from '../context/AuthContext';
 
 export default function HistoryScreen({ navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => createHistoryScreenStyles(theme), [theme]);
 
-  const { isGuest } = useUserStatus();
-  const { user } = useContext(AuthContext);
-
+  const [authRef, setAuthRef] = useState(null);
+  const [isGuest, setIsGuest] = useState(true);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchHistory = useCallback(async () => {
-    if (!user?.uid) return;
+  const fetchHistory = async (authInstance) => {
+    const user = authInstance?.currentUser;
+    if (!user) return;
+
     try {
       const ref = collection(db, `users/${user.uid}/history`);
       const snapshot = await getDocs(ref);
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
       data.sort((a, b) => b.completedAt?.toMillis?.() - a.completedAt?.toMillis?.());
       setHistory(data);
     } catch (err) {
@@ -36,30 +39,38 @@ export default function HistoryScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [user?.uid]);
+  };
 
   useEffect(() => {
-    if (isGuest) {
-      setHistory([]);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    fetchHistory();
-  }, [isGuest, fetchHistory]);
+    const init = async () => {
+      const auth = await getAuthInstance();
+      setAuthRef(auth);
+      const guest = !auth?.currentUser;
+      setIsGuest(guest);
+      if (!guest) {
+        setLoading(true);
+        fetchHistory(auth);
+      } else {
+        setLoading(false);
+      }
+    };
+    init();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      if (!isGuest && user?.uid) {
+      if (!isGuest && authRef) {
         setLoading(true);
-        fetchHistory();
+        fetchHistory(authRef);
       }
     });
     return unsubscribe;
-  }, [navigation, isGuest, user?.uid, fetchHistory]);
+  }, [navigation, isGuest, authRef]);
 
   const handleDeleteHistoryItem = async (itemId) => {
-    if (!user?.uid) return;
+    const user = authRef?.currentUser;
+    if (!user) return;
+
     try {
       await deleteDoc(doc(db, `users/${user.uid}/history`, itemId));
       setHistory(prev => prev.filter(item => item.id !== itemId));
@@ -114,7 +125,8 @@ export default function HistoryScreen({ navigation }) {
           renderItem={({ item }) => (
             <TouchableOpacity
               onPress={async () => {
-                if (!user?.uid) return;
+                const user = authRef?.currentUser;
+                if (!user) return;
                 try {
                   const ref = doc(db, `users/${user.uid}/history`, item.id.toString());
                   const snap = await getDoc(ref);
@@ -148,9 +160,7 @@ export default function HistoryScreen({ navigation }) {
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.savedcardDescription}>{item.address || 'No address'}</Text>
-                  <Text style={styles.savedcardPrice}>
-                    Completed: {item.completedAt?.seconds ? new Date(item.completedAt.seconds * 1000).toLocaleString() : '—'}
-                  </Text>
+                  <Text style={styles.savedcardPrice}>Completed: {new Date(item.completedAt?.seconds * 1000).toLocaleString()}</Text>
                 </View>
               </View>
             </TouchableOpacity>

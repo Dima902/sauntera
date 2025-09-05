@@ -1,11 +1,11 @@
 {
   "cli": {
-    "version": ">= 3.0.0",
+    "version": ">= 10.0.0",
     "appVersionSource": "local"
   },
   "build": {
     "development": {
-      "developmentClient": false,
+      "developmentClient": true,
       "distribution": "internal",
       "android": {
         "buildType": "apk",
@@ -41,11 +41,12 @@
       "node": "20.11.1"
     },
     "localtest": {
-      "developmentClient": false,
+      "developmentClient": true,
       "distribution": "internal",
+      "channel": "localtest",
       "android": {
         "buildType": "apk",
-        "autoIncrement": true
+        "autoIncrement": false
       },
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "true"

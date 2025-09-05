@@ -7,39 +7,6 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:450911057083:android:e0231fc9c76cf2ba5c659e",
-        "android_client_info": {
-          "package_name": "com.anonymous.frontend"
-        }
-      },
-      "oauth_client": [
-        {
-          "client_id": "450911057083-q7v91likrb17ofdvmruq83n160ht8js5.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.anonymous.frontend",
-            "certificate_hash": "29d2ba803e02ad601947f94a9365912271f3de97"
-          }
-        }
-      ],
-      "api_key": [
-        {
-          "current_key": "AIzaSyB9Izd3fIYYxEEqrB2R82ttI9crgZuBreM"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "450911057083-hjl3qhno1boii7d2qeg9shu7socv8fc7.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
-        }
-      }
-    },
-    {
-      "client_info": {
         "mobilesdk_app_id": "1:450911057083:android:02f9d3376174ef7b5c659e",
         "android_client_info": {
           "package_name": "com.sauntera.app"

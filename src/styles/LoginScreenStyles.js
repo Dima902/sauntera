@@ -3,10 +3,11 @@ import { StyleSheet } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, // allow ImageBackground to fill the whole screen
+    flex: 1, // ImageBackground fills the whole screen
+    backgroundColor: 'transparent',
   },
 
-  // Semi-transparent color wash over the bg image
+  // Semi-transparent wash over the image
   overlay: {
     flex: 1,
     width: '100%',
@@ -14,7 +15,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0, 29, 58, 0.44)',
     paddingHorizontal: 30,
-    // NOTE: paddingTop/paddingBottom now come from safe-area insets in the component
+    // NOTE: top/bottom padding comes from safe-area insets in the screen
   },
 
   contentWrapper: {
@@ -56,7 +57,7 @@ const styles = StyleSheet.create({
 
   disclaimerWrapper: {
     paddingHorizontal: 24,
-    // bottom spacing comes from safe area via container paddingBottom
+    // bottom spacing from safe-area via screen paddingBottom
   },
   disclaimerText: {
     fontSize: 12,
