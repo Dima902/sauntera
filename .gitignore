@@ -77,4 +77,5 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# @end expo-cli
+# @end expo-clicredentials/ 
+credentials/serviceAccount.json
