@@ -21,14 +21,27 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.sauntera.app",
-      "permissions": ["ACCESS_FINE_LOCATION", "READ_CALENDAR", "WRITE_CALENDAR"],
-      "versionCode": 66,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "READ_CALENDAR",
+        "WRITE_CALENDAR"
+      ],
+      "versionCode": 67,
       "intentFilters": [
         {
           "action": "VIEW",
           "autoVerify": true,
-          "category": ["BROWSABLE", "DEFAULT"],
-          "data": [{ "scheme": "sauntera", "host": "*" }]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "scheme": "sauntera",
+              "host": "*"
+            }
+          ]
         }
       ]
     },
@@ -57,7 +70,10 @@
             "minSdkVersion": 24,
             "kotlinVersion": "2.0.21",
             "gradlePluginVersion": "8.8.2",
-            "extraMavenRepos": ["https://jitpack.io", "https://maven.revenuecat.com"]
+            "extraMavenRepos": [
+              "https://jitpack.io",
+              "https://maven.revenuecat.com"
+            ]
           }
         }
       ],
@@ -70,7 +86,9 @@
       "typedRoutes": true
     },
     "extra": {
-      "router": { "origin": false },
+      "router": {
+        "origin": false
+      },
       "firebase": {
         "apiKey": "AIzaSyA-BuWXUPJgZ_ku0Y08Uy_Hse12jsUQNsE",
         "authDomain": "happoria.firebaseapp.com",
